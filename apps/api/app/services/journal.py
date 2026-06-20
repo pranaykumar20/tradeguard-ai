@@ -41,8 +41,7 @@ class JournalService:
 
     async def fill_trade(self, trade_id: str, fill_price: float | None = None) -> dict:
         storage = await get_storage()
-        trades = await storage.list_paper_trades(limit=500)
-        trade = next((t for t in trades if t["id"] == trade_id), None)
+        trade = await storage.get_paper_trade(trade_id)
         if not trade:
             raise ValueError("Trade not found")
 

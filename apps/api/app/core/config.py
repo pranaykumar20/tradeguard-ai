@@ -72,7 +72,26 @@ class Settings(BaseSettings):
     risk_require_manual_approval: bool = True
     risk_allow_options: bool = False
 
-    market_refresh_interval_minutes: int = 15
+    # Phase 7 — execution & portfolio expansion
+    multi_broker_enabled: bool = True
+    default_broker_id: str = "robinhood_agentic"
+    options_workflow_enabled: bool = True
+    risk_max_option_trade_usd: float = 100.0
+    tax_lot_tracking_enabled: bool = True
+    wash_sale_window_days: int = 30
+
+    # Phase 8 — observability & compliance
+    audit_export_max_days: int = 90
+    platform_latency_threshold_ms: float = 2000.0
+    model_drift_threshold: float = 0.05
+    platform_health_check_enabled: bool = True
+
+    # Phase 9 — product & UX
+    push_notifications_enabled: bool = True
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:ops@tradeguard.ai"
+
     paper_trade_goal: int = 100
     memory_store_path: str = ".data/tradeguard_store.json"
 

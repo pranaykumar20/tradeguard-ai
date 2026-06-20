@@ -126,10 +126,14 @@ class RiskEngine:
         order_type: str = "limit",
         asset_type: str = "equity",
         portfolio: dict | None = None,
+        option_contract: dict | None = None,
     ) -> dict:
+        from app.core.config import settings
+
         order_value = quantity * limit_price
         warnings: list[str] = []
         blocks: list[str] = []
+        requires_approval = self.rules.require_manual_approval
 
         portfolio = portfolio or demo_portfolio()
         blocks.extend(self._daily_loss_blocks(portfolio))
@@ -143,8 +147,23 @@ class RiskEngine:
         if asset_type in self.rules.blocked_asset_types:
             blocks.append(f"{asset_type} trades are blocked by policy.")
 
-        if asset_type == "option" and not self.rules.allow_options:
-            blocks.append("Options require explicit manual approval — blocked in Phase 1.")
+        max_trade = self.rules.max_trade_usd
+        if asset_type == "option":
+            requires_approval = True
+            if not settings.options_workflow_enabled:
+                blocks.append("Options workflow is disabled.")
+            else:
+                warnings.append("Options require explicit manual approval every time.")
+                max_trade = settings.risk_max_option_trade_usd
+                if option_contract:
+                    opt_type = option_contract.get("option_type", "call")
+                    strike = option_contract.get("strike")
+                    expiry = option_contract.get("expiry")
+                    warnings.append(
+                        f"Option contract: {opt_type.upper()} strike ${strike} exp {expiry}."
+                    )
+                else:
+                    warnings.append("Option contract details recommended for audit trail.")
 
         if _in_no_trade_window(self.rules.no_trade_first_minutes):
             blocks.append(
@@ -154,9 +173,9 @@ class RiskEngine:
         if ticker not in self.rules.allowed_tickers:
             blocks.append(f"{ticker} not in allowed list.")
 
-        if order_value > self.rules.max_trade_usd:
+        if order_value > max_trade:
             blocks.append(
-                f"Order value ${order_value:.2f} exceeds max ${self.rules.max_trade_usd:.2f}."
+                f"Order value ${order_value:.2f} exceeds max ${max_trade:.2f}."
             )
 
         if order_type == "market" and not self.rules.allow_market_orders:
@@ -175,6 +194,8 @@ class RiskEngine:
             "allowed": allowed,
             "verdict": verdict,
             "order_value": round(order_value, 2),
+            "asset_type": asset_type,
+            "requires_approval": requires_approval or asset_type == "option",
             "warnings": warnings,
             "blocks": blocks,
             "requires_approval": self.rules.require_manual_approval,

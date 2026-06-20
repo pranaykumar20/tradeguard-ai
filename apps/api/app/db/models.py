@@ -49,6 +49,8 @@ class PaperTrade(Base):
     verdict: Mapped[str] = mapped_column(String(20))
     reason: Mapped[str] = mapped_column(Text, default="")
     pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="manual")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -107,6 +109,10 @@ class ApprovalRequest(Base):
     quantity: Mapped[float] = mapped_column(Float)
     limit_price: Mapped[float] = mapped_column(Float)
     order_type: Mapped[str] = mapped_column(String(16), default="limit")
+    asset_type: Mapped[str] = mapped_column(String(16), default="equity")
+    broker_id: Mapped[str] = mapped_column(String(32), default="robinhood_agentic")
+    account_id: Mapped[str] = mapped_column(String(64), default="agentic-main")
+    option_contract: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     risk_preview: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     mcp_preview: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -182,3 +188,32 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class BrokerAccount(Base):
+    __tablename__ = "broker_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True, default="default")
+    broker_id: Mapped[str] = mapped_column(String(32), index=True)
+    account_id: Mapped[str] = mapped_column(String(64), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    account_type: Mapped[str] = mapped_column(String(32), default="taxable")
+    enabled: Mapped[bool] = mapped_column(default=True)
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TaxLot(Base):
+    __tablename__ = "tax_lots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True, default="default")
+    broker_id: Mapped[str] = mapped_column(String(32), index=True)
+    account_id: Mapped[str] = mapped_column(String(64), index=True)
+    ticker: Mapped[str] = mapped_column(String(16), index=True)
+    quantity: Mapped[float] = mapped_column(Float)
+    cost_basis: Mapped[float] = mapped_column(Float)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    lot_method: Mapped[str] = mapped_column(String(16), default="fifo")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

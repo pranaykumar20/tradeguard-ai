@@ -15,7 +15,7 @@ class RiskRules(BaseModel):
     allowed_tickers: list[str] = Field(
         default_factory=lambda: ["NVDA", "MSFT", "META", "TSLA", "QQQ", "GBTC"]
     )
-    blocked_asset_types: list[str] = Field(default_factory=lambda: ["option", "crypto_option"])
+    blocked_asset_types: list[str] = Field(default_factory=lambda: ["crypto_option"])
 
 
 def default_rules() -> RiskRules:

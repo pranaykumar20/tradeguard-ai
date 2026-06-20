@@ -59,7 +59,28 @@ async def test_blocks_market_order():
 
 
 @pytest.mark.asyncio
-async def test_blocks_options():
+async def test_options_require_manual_approval():
+    engine = RiskEngine(RiskRules(allowed_tickers=["NVDA"], max_trade_usd=500, no_trade_first_minutes=0))
+    with patch("app.risk.engine.compute_ticker_features", new_callable=AsyncMock) as mock_features:
+        mock_features.return_value = MOCK_FEATURES.copy()
+        result = await engine.preview_trade(
+            "NVDA",
+            "buy",
+            quantity=1,
+            limit_price=50,
+            asset_type="option",
+            option_contract={"option_type": "call", "strike": 140, "expiry": "2026-07-18"},
+        )
+    assert result["allowed"] is True
+    assert result["requires_approval"] is True
+    assert any("manual approval" in w.lower() for w in result["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_blocks_options_when_workflow_disabled(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "options_workflow_enabled", False)
     engine = RiskEngine(RiskRules(allowed_tickers=["NVDA"], max_trade_usd=500, no_trade_first_minutes=0))
     with patch("app.risk.engine.compute_ticker_features", new_callable=AsyncMock) as mock_features:
         mock_features.return_value = MOCK_FEATURES.copy()

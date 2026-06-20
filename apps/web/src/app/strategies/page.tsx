@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
+import { StrategyBuilder } from "@/components/StrategyBuilder";
 import {
   evaluateStrategy,
   getStrategies,
@@ -111,8 +112,18 @@ export default function StrategiesPage() {
       <main className="mx-auto w-full max-w-[1400px] flex-1 p-7">
         <PageHeader
           title="Trade Strategies"
-          subtitle="Phase 4.2 · Pre-defined rules with ALLOW-only auto-approve"
+          subtitle="Phase 9 · Visual rule builder + semi-automated execution"
         />
+
+        <Card className="mb-[18px]">
+          <h2 className="text-lg font-bold">Strategy Builder</h2>
+          <p className="tg-sub mt-1 text-sm">
+            Compose sector exposure rules without editing JSON — saved strategies appear below.
+          </p>
+          <div className="mt-4">
+            <StrategyBuilder onCreated={() => void reload()} />
+          </div>
+        </Card>
 
         <Card className="mb-[18px]">
           <div className="flex flex-wrap items-center justify-between gap-3">

@@ -22,12 +22,14 @@ from app.db.models import (
     ApprovalRequest,
     AutomationAuditLog,
     Base,
+    BrokerAccount,
     ChatMessage,
     ChatSession,
     MarketFeatureCache,
     PaperTrade,
     RAGDocument,
     StrategyProposal,
+    TaxLot,
     TradeStrategy,
     User,
 )
@@ -85,6 +87,10 @@ class StorageBackend(ABC):
 
     @abstractmethod
     async def list_paper_trades(self, limit: int = 100) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def get_paper_trade(self, trade_id: str) -> dict | None:
         pass
 
     @abstractmethod
@@ -189,6 +195,24 @@ class StorageBackend(ABC):
     async def list_users(self) -> list[dict]:
         pass
 
+    @abstractmethod
+    async def list_broker_accounts(self, enabled_only: bool = True) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def create_broker_account(self, account: dict) -> dict:
+        pass
+
+    @abstractmethod
+    async def list_tax_lots(
+        self, ticker: str | None = None, account_id: str | None = None
+    ) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def create_tax_lot(self, lot: dict) -> dict:
+        pass
+
     async def list_user_ids(self) -> list[str]:
         users = await self.list_users()
         if users:
@@ -214,6 +238,8 @@ class MemoryStorageBackend(StorageBackend):
             "strategy_proposals": [],
             "automation_audit": [],
             "users": [],
+            "broker_accounts": [],
+            "tax_lots": [],
         }
 
     async def init(self) -> None:
@@ -296,6 +322,13 @@ class MemoryStorageBackend(StorageBackend):
         uid = _uid()
         rows = [t for t in self._data["paper_trades"] if _row_user_id(t) == uid]
         return rows[:limit]
+
+    async def get_paper_trade(self, trade_id: str) -> dict | None:
+        uid = _uid()
+        return next(
+            (t for t in self._data["paper_trades"] if t["id"] == trade_id and _row_user_id(t) == uid),
+            None,
+        )
 
     async def paper_trade_stats(self) -> dict:
         trades = await self.list_paper_trades(limit=500)
@@ -522,6 +555,50 @@ class MemoryStorageBackend(StorageBackend):
         self._persist()
         return row
 
+    async def list_broker_accounts(self, enabled_only: bool = True) -> list[dict]:
+        uid = _uid()
+        rows = [
+            a
+            for a in self._data.get("broker_accounts", [])
+            if _row_user_id(a) == uid and (not enabled_only or a.get("enabled", True))
+        ]
+        return rows
+
+    async def create_broker_account(self, account: dict) -> dict:
+        row = {
+            "id": str(uuid4()),
+            "user_id": account.get("user_id", _uid()),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **account,
+        }
+        self._data.setdefault("broker_accounts", []).append(row)
+        self._persist()
+        return row
+
+    async def list_tax_lots(
+        self, ticker: str | None = None, account_id: str | None = None
+    ) -> list[dict]:
+        uid = _uid()
+        rows = [lot for lot in self._data.get("tax_lots", []) if _row_user_id(lot) == uid]
+        if ticker:
+            rows = [lot for lot in rows if lot.get("ticker") == ticker.upper()]
+        if account_id:
+            rows = [lot for lot in rows if lot.get("account_id") == account_id]
+        return rows
+
+    async def create_tax_lot(self, lot: dict) -> dict:
+        row = {
+            "id": str(uuid4()),
+            "user_id": lot.get("user_id", _uid()),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **lot,
+        }
+        if isinstance(row.get("acquired_at"), datetime):
+            row["acquired_at"] = row["acquired_at"].isoformat()
+        self._data.setdefault("tax_lots", []).append(row)
+        self._persist()
+        return row
+
 
 class PostgresStorageBackend(StorageBackend):
     backend_name = "postgres"
@@ -594,19 +671,7 @@ class PostgresStorageBackend(StorageBackend):
             session.add(row)
             await session.commit()
             await session.refresh(row)
-            return {
-                "id": row.id,
-                "ticker": row.ticker,
-                "side": row.side,
-                "quantity": row.quantity,
-                "limit_price": row.limit_price,
-                "fill_price": row.fill_price,
-                "status": row.status,
-                "verdict": row.verdict,
-                "reason": row.reason,
-                "pnl": row.pnl,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-            }
+            return self._paper_trade_to_dict(row)
 
     async def update_paper_trade(self, trade_id: str, updates: dict) -> dict | None:
         async with self._session() as session:
@@ -617,19 +682,7 @@ class PostgresStorageBackend(StorageBackend):
                 setattr(row, key, val)
             await session.commit()
             await session.refresh(row)
-            return {
-                "id": row.id,
-                "ticker": row.ticker,
-                "side": row.side,
-                "quantity": row.quantity,
-                "limit_price": row.limit_price,
-                "fill_price": row.fill_price,
-                "status": row.status,
-                "verdict": row.verdict,
-                "reason": row.reason,
-                "pnl": row.pnl,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-            }
+            return self._paper_trade_to_dict(row)
 
     async def list_paper_trades(self, limit: int = 100) -> list[dict]:
         async with self._session() as session:
@@ -639,22 +692,14 @@ class PostgresStorageBackend(StorageBackend):
                 .order_by(PaperTrade.created_at.desc())
                 .limit(limit)
             )
-            return [
-                {
-                    "id": r.id,
-                    "ticker": r.ticker,
-                    "side": r.side,
-                    "quantity": r.quantity,
-                    "limit_price": r.limit_price,
-                    "fill_price": r.fill_price,
-                    "status": r.status,
-                    "verdict": r.verdict,
-                    "reason": r.reason,
-                    "pnl": r.pnl,
-                    "created_at": r.created_at.isoformat() if r.created_at else None,
-                }
-                for r in result.scalars().all()
-            ]
+            return [self._paper_trade_to_dict(r) for r in result.scalars().all()]
+
+    async def get_paper_trade(self, trade_id: str) -> dict | None:
+        async with self._session() as session:
+            row = await session.get(PaperTrade, trade_id)
+            if not row or row.user_id != _uid():
+                return None
+            return self._paper_trade_to_dict(row)
 
     async def paper_trade_stats(self) -> dict:
         trades = await self.list_paper_trades(limit=500)
@@ -933,6 +978,65 @@ class PostgresStorageBackend(StorageBackend):
             await session.refresh(row)
             return self._user_to_dict(row)
 
+    async def list_broker_accounts(self, enabled_only: bool = True) -> list[dict]:
+        async with self._session() as session:
+            query = select(BrokerAccount).where(BrokerAccount.user_id == _uid())
+            if enabled_only:
+                query = query.where(BrokerAccount.enabled.is_(True))
+            result = await session.execute(query.order_by(BrokerAccount.created_at.asc()))
+            return [self._broker_account_to_dict(r) for r in result.scalars().all()]
+
+    async def create_broker_account(self, account: dict) -> dict:
+        async with self._session() as session:
+            payload = dict(account)
+            payload.setdefault("user_id", _uid())
+            row = BrokerAccount(**payload)
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._broker_account_to_dict(row)
+
+    async def list_tax_lots(
+        self, ticker: str | None = None, account_id: str | None = None
+    ) -> list[dict]:
+        async with self._session() as session:
+            query = select(TaxLot).where(TaxLot.user_id == _uid())
+            if ticker:
+                query = query.where(TaxLot.ticker == ticker.upper())
+            if account_id:
+                query = query.where(TaxLot.account_id == account_id)
+            result = await session.execute(query.order_by(TaxLot.acquired_at.asc()))
+            return [self._tax_lot_to_dict(r) for r in result.scalars().all()]
+
+    async def create_tax_lot(self, lot: dict) -> dict:
+        async with self._session() as session:
+            payload = dict(lot)
+            payload.setdefault("user_id", _uid())
+            row = TaxLot(**payload)
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._tax_lot_to_dict(row)
+
+    @staticmethod
+    def _paper_trade_to_dict(row: PaperTrade) -> dict:
+        return {
+            "id": row.id,
+            "user_id": row.user_id,
+            "ticker": row.ticker,
+            "side": row.side,
+            "quantity": row.quantity,
+            "limit_price": row.limit_price,
+            "fill_price": row.fill_price,
+            "status": row.status,
+            "verdict": row.verdict,
+            "reason": row.reason,
+            "pnl": row.pnl,
+            "approval_id": row.approval_id,
+            "source": row.source,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
     @staticmethod
     def _user_to_dict(row: User) -> dict:
         return {
@@ -1006,14 +1110,48 @@ class PostgresStorageBackend(StorageBackend):
         }
 
     @staticmethod
+    def _broker_account_to_dict(row: BrokerAccount) -> dict:
+        return {
+            "id": row.id,
+            "user_id": row.user_id,
+            "broker_id": row.broker_id,
+            "account_id": row.account_id,
+            "label": row.label,
+            "account_type": row.account_type,
+            "enabled": row.enabled,
+            "meta": row.meta or {},
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def _tax_lot_to_dict(row: TaxLot) -> dict:
+        return {
+            "id": row.id,
+            "user_id": row.user_id,
+            "broker_id": row.broker_id,
+            "account_id": row.account_id,
+            "ticker": row.ticker,
+            "quantity": row.quantity,
+            "cost_basis": row.cost_basis,
+            "acquired_at": row.acquired_at.isoformat() if row.acquired_at else None,
+            "lot_method": row.lot_method,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
     def _approval_to_dict(row: ApprovalRequest) -> dict:
         return {
             "id": row.id,
+            "user_id": row.user_id,
             "ticker": row.ticker,
             "side": row.side,
             "quantity": row.quantity,
             "limit_price": row.limit_price,
             "order_type": row.order_type,
+            "asset_type": row.asset_type,
+            "broker_id": row.broker_id,
+            "account_id": row.account_id,
+            "option_contract": row.option_contract,
             "status": row.status,
             "risk_preview": row.risk_preview,
             "mcp_preview": row.mcp_preview,

@@ -86,4 +86,4 @@ async def test_ml_status_endpoint(client):
 async def test_health_phase_6(client):
     resp = await client.get("/health")
     assert resp.status_code == 200
-    assert resp.json()["phase"] == 6
+    assert resp.json()["phase"] == 9

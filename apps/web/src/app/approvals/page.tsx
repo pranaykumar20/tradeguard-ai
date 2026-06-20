@@ -19,6 +19,11 @@ type OrderForm = {
   quantity: number;
   limit_price: string;
   notes: string;
+  asset_type: "equity" | "option";
+  broker_id: string;
+  option_type: "call" | "put";
+  strike: string;
+  expiry: string;
 };
 
 const EMPTY_FORM: OrderForm = {
@@ -27,6 +32,11 @@ const EMPTY_FORM: OrderForm = {
   quantity: 1,
   limit_price: "",
   notes: "",
+  asset_type: "equity",
+  broker_id: "mock_ira",
+  option_type: "call",
+  strike: "140",
+  expiry: "2026-07-18",
 };
 
 function verdictToneClass(verdict: string) {
@@ -88,6 +98,16 @@ export default function ApprovalsPage() {
         side: form.side,
         quantity: form.quantity,
         limit_price: limit,
+        asset_type: form.asset_type,
+        broker_id: form.broker_id,
+        option_contract:
+          form.asset_type === "option"
+            ? {
+                option_type: form.option_type,
+                strike: Number(form.strike),
+                expiry: form.expiry,
+              }
+            : undefined,
       });
       setPreview(result);
     } catch {
@@ -109,6 +129,16 @@ export default function ApprovalsPage() {
         quantity: form.quantity,
         limit_price: limit,
         notes: form.notes,
+        asset_type: form.asset_type,
+        broker_id: form.broker_id,
+        option_contract:
+          form.asset_type === "option"
+            ? {
+                option_type: form.option_type,
+                strike: Number(form.strike),
+                expiry: form.expiry,
+              }
+            : undefined,
       });
       setActionMsg("Order submitted for approval");
       setPreview(null);
@@ -153,9 +183,9 @@ export default function ApprovalsPage() {
   const mcp = selected?.mcp_preview;
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen pb-24 md:pb-0">
       <Sidebar />
-      <main className="mx-auto w-full max-w-[1400px] flex-1 p-7">
+      <main className="mx-auto w-full max-w-[1400px] flex-1 p-4 md:p-7">
         <PageHeader
           title="Trade Approval"
           subtitle="Risk gate → MCP preview → manual approve → guarded execution"
@@ -183,7 +213,9 @@ export default function ApprovalsPage() {
                   }`}
                 >
                   <div className="font-bold">
-                    {item.side.toUpperCase()} {item.quantity} {item.ticker}
+                    {item.side.toUpperCase()} {item.quantity}{" "}
+                    {item.asset_type === "option" ? "contracts" : "shares"} {item.ticker}
+                    {item.asset_type === "option" ? " (option)" : ""}
                   </div>
                   <div className="tg-sub text-xs">
                     ${item.limit_price.toFixed(2)} · {item.risk_preview?.verdict ?? "—"}
@@ -218,7 +250,7 @@ export default function ApprovalsPage() {
                       <Row label="MCP" value={mcp.provider} />
                     )}
                   </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="mt-4 hidden flex-wrap gap-2 md:flex">
                     <Btn disabled={loading} onClick={() => handleApprove(selected.id)}>
                       Approve Trade
                     </Btn>
@@ -270,7 +302,31 @@ export default function ApprovalsPage() {
 
         <Card>
           <h2 className="text-lg font-extrabold">Submit New Order</h2>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+            <label className="text-sm">
+              <span className="tg-label">Asset</span>
+              <select
+                className="mt-1 w-full rounded-lg border border-card-border bg-background px-3 py-2"
+                value={form.asset_type}
+                onChange={(e) =>
+                  setForm({ ...form, asset_type: e.target.value as "equity" | "option" })
+                }
+              >
+                <option value="equity">Equity</option>
+                <option value="option">Option (manual approval)</option>
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="tg-label">Broker</span>
+              <select
+                className="mt-1 w-full rounded-lg border border-card-border bg-background px-3 py-2"
+                value={form.broker_id}
+                onChange={(e) => setForm({ ...form, broker_id: e.target.value })}
+              >
+                <option value="mock_ira">Mock IRA</option>
+                <option value="robinhood_agentic">Robinhood Agentic</option>
+              </select>
+            </label>
             <label className="text-sm">
               <span className="tg-label">Ticker</span>
               <input
@@ -324,6 +380,41 @@ export default function ApprovalsPage() {
               />
             </label>
           </div>
+          {form.asset_type === "option" && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <label className="text-sm">
+                <span className="tg-label">Option type</span>
+                <select
+                  className="mt-1 w-full rounded-lg border border-card-border bg-background px-3 py-2"
+                  value={form.option_type}
+                  onChange={(e) =>
+                    setForm({ ...form, option_type: e.target.value as "call" | "put" })
+                  }
+                >
+                  <option value="call">Call</option>
+                  <option value="put">Put</option>
+                </select>
+              </label>
+              <label className="text-sm">
+                <span className="tg-label">Strike</span>
+                <input
+                  type="number"
+                  className="mt-1 w-full rounded-lg border border-card-border bg-background px-3 py-2"
+                  value={form.strike}
+                  onChange={(e) => setForm({ ...form, strike: e.target.value })}
+                />
+              </label>
+              <label className="text-sm">
+                <span className="tg-label">Expiry</span>
+                <input
+                  type="date"
+                  className="mt-1 w-full rounded-lg border border-card-border bg-background px-3 py-2"
+                  value={form.expiry}
+                  onChange={(e) => setForm({ ...form, expiry: e.target.value })}
+                />
+              </label>
+            </div>
+          )}
           <div className="mt-4 flex flex-wrap gap-2">
             <Btn variant="secondary" disabled={loading} onClick={handlePreview}>
               Preview
@@ -348,6 +439,32 @@ export default function ApprovalsPage() {
             </div>
           )}
         </Card>
+
+        {selected && (
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-card-border bg-[rgba(7,17,31,0.96)] p-4 backdrop-blur md:hidden">
+            <div className="mx-auto flex max-w-lg gap-3">
+              <Btn
+                className="min-h-[48px] flex-1 text-base"
+                disabled={loading}
+                onClick={() => handleApprove(selected.id)}
+              >
+                Approve
+              </Btn>
+              <Btn
+                variant="danger"
+                className="min-h-[48px] flex-1 text-base"
+                disabled={loading}
+                onClick={() => handleReject(selected.id)}
+              >
+                Reject
+              </Btn>
+            </div>
+            <p className="tg-sub mt-2 text-center text-xs">
+              {selected.side.toUpperCase()} {selected.quantity} {selected.ticker} · $
+              {selected.limit_price.toFixed(2)}
+            </p>
+          </div>
+        )}
       </main>
     </div>
   );

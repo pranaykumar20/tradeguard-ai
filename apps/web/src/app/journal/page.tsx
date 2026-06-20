@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import {
@@ -135,6 +136,7 @@ function JournalTable() {
                 <th className="pb-3 text-[13px] font-bold">Ticker</th>
                 <th className="pb-3 text-[13px] font-bold">Decision</th>
                 <th className="pb-3 text-[13px] font-bold">Status</th>
+                <th className="pb-3 text-[13px] font-bold">Replay</th>
               </tr>
             </thead>
             <tbody>
@@ -144,6 +146,14 @@ function JournalTable() {
                   <td className="py-3.5 font-bold">{t.ticker}</td>
                   <td className="py-3.5">{t.verdict}</td>
                   <td className={`py-3.5 font-bold ${statusClass(t.status)}`}>{t.status}</td>
+                  <td className="py-3.5">
+                    <Link
+                      href={`/observability?replay=${t.id}&type=trade`}
+                      className="text-teal underline"
+                    >
+                      View
+                    </Link>
+                  </td>
                 </tr>
               ))}
             </tbody>

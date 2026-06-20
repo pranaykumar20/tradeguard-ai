@@ -2,21 +2,21 @@
 
 import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
-import { getPortfolio, type Portfolio } from "@/lib/api";
+import { getHouseholdPortfolio, type HouseholdPortfolio } from "@/lib/api";
 import { Card, PageHeader, Row, StatCard } from "@/components/ui/Card";
 
 export default function PortfolioPage() {
-  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+  const [household, setHousehold] = useState<HouseholdPortfolio | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    getPortfolio()
-      .then(setPortfolio)
+    getHouseholdPortfolio()
+      .then(setHousehold)
       .catch(() => setError(true));
   }, []);
 
-  const positions = portfolio
-    ? Object.entries(portfolio.positions).sort(([, a], [, b]) => b.weight_pct - a.weight_pct)
+  const positions = household
+    ? Object.entries(household.positions).sort(([, a], [, b]) => b.weight_pct - a.weight_pct)
     : [];
 
   return (
@@ -24,28 +24,50 @@ export default function PortfolioPage() {
       <Sidebar />
       <main className="mx-auto w-full max-w-[1400px] flex-1 p-7">
         <PageHeader
-          title="Portfolio Risk"
-          subtitle="Demo portfolio · Live Robinhood MCP in Phase 3"
+          title="Household Portfolio"
+          subtitle="Aggregated exposure across linked broker accounts"
         />
 
         {error && <p className="text-sm text-red">Could not load portfolio. Is the API running?</p>}
 
-        {portfolio && (
+        {household && (
           <>
             <div className="grid grid-cols-2 gap-[18px] lg:grid-cols-4">
-              <StatCard label="Account Value" value={`$${portfolio.account_value.toLocaleString()}`} />
+              <StatCard
+                label="Household Value"
+                value={`$${household.total_value.toLocaleString()}`}
+              />
               <StatCard
                 label="Today P/L"
-                value={`${portfolio.daily_pnl >= 0 ? "+" : ""}$${portfolio.daily_pnl.toLocaleString()}`}
-                tone={portfolio.daily_pnl >= 0 ? "green" : "red"}
+                value={`${household.total_daily_pnl >= 0 ? "+" : ""}$${household.total_daily_pnl.toLocaleString()}`}
+                tone={household.total_daily_pnl >= 0 ? "green" : "red"}
               />
-              <StatCard label="Buying Power" value={`$${portfolio.buying_power.toLocaleString()}`} />
-              <StatCard label="Source" value={(portfolio.source ?? "demo").toUpperCase()} tone="blue" />
+              <StatCard label="Linked Accounts" value={String(household.account_count)} tone="blue" />
+              <StatCard label="Source" value={(household.source ?? "demo").toUpperCase()} />
+            </div>
+
+            <div className="mt-[18px] grid gap-[18px] lg:grid-cols-3">
+              {household.accounts.map((account) => (
+                <Card key={`${account.broker_id}-${account.account_id}`}>
+                  <h2 className="text-lg font-extrabold">
+                    {account.account_label ?? account.account_id}
+                  </h2>
+                  <div className="mt-2">
+                    <Row label="Broker" value={account.broker_id ?? "—"} />
+                    <Row label="Value" value={`$${account.account_value.toLocaleString()}`} />
+                    <Row
+                      label="Today P/L"
+                      value={`${account.daily_pnl >= 0 ? "+" : ""}$${account.daily_pnl.toLocaleString()}`}
+                      tone={account.daily_pnl >= 0 ? "green" : "red"}
+                    />
+                  </div>
+                </Card>
+              ))}
             </div>
 
             <div className="mt-[18px] grid gap-[18px] lg:grid-cols-2">
               <Card>
-                <h2 className="text-lg font-extrabold">Holdings</h2>
+                <h2 className="text-lg font-extrabold">Combined Holdings</h2>
                 <table className="mt-4 w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10 text-left text-muted">
@@ -69,9 +91,9 @@ export default function PortfolioPage() {
               </Card>
 
               <Card warning>
-                <h2 className="text-lg font-extrabold">Sector Exposure</h2>
+                <h2 className="text-lg font-extrabold">Household Sector Exposure</h2>
                 <div className="mt-2">
-                  {Object.entries(portfolio.sector_exposure).map(([sector, pct]) => (
+                  {Object.entries(household.sector_exposure).map(([sector, pct]) => (
                     <Row
                       key={sector}
                       label={sector}

@@ -156,6 +156,10 @@ class MonitoringService:
                 "channels_sent": channels,
             }
         )
+        if settings.push_notifications_enabled:
+            from app.services.push import PushNotificationService
+
+            await PushNotificationService().notify(title, detail, event_type, severity)
         return event
 
     async def notify_block(self, ticker: str, blocks: list[str]) -> None:

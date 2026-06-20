@@ -66,27 +66,29 @@ async def test_execution_submit_and_approve():
     await store.init()
 
     svc = ExecutionService()
-    svc.mcp = MockRobinhoodMCPClient()
+    mock_client = MockRobinhoodMCPClient()
 
-    with patch("app.services.execution.get_storage", new_callable=AsyncMock) as mock_storage:
-        mock_storage.return_value = store
-        with patch("app.risk.engine.compute_ticker_features", new_callable=AsyncMock) as mock_risk:
-            mock_risk.return_value = MOCK_FEATURES.copy()
-            submitted = await svc.submit_for_approval(
-                ticker="NVDA",
-                side="buy",
-                quantity=1,
-                limit_price=100,
-            )
+    with patch.object(svc, "_resolve_broker", return_value=(mock_client, "robinhood_agentic")):
+        with patch("app.services.execution.get_storage", new_callable=AsyncMock) as mock_storage:
+            mock_storage.return_value = store
+            with patch("app.risk.engine.compute_ticker_features", new_callable=AsyncMock) as mock_risk:
+                mock_risk.return_value = MOCK_FEATURES.copy()
+                submitted = await svc.submit_for_approval(
+                    ticker="NVDA",
+                    side="buy",
+                    quantity=1,
+                    limit_price=100,
+                )
 
     assert submitted["status"] == "pending"
     approval_id = submitted["approval"]["id"]
 
-    with patch("app.services.execution.get_storage", new_callable=AsyncMock) as mock_storage:
-        mock_storage.return_value = store
-        with patch("app.risk.engine.compute_ticker_features", new_callable=AsyncMock) as mock_risk:
-            mock_risk.return_value = MOCK_FEATURES.copy()
-            result = await svc.approve(approval_id)
+    with patch.object(svc, "_resolve_broker", return_value=(mock_client, "robinhood_agentic")):
+        with patch("app.services.execution.get_storage", new_callable=AsyncMock) as mock_storage:
+            mock_storage.return_value = store
+            with patch("app.risk.engine.compute_ticker_features", new_callable=AsyncMock) as mock_risk:
+                mock_risk.return_value = MOCK_FEATURES.copy()
+                result = await svc.approve(approval_id)
 
     assert result["status"] == "executed"
     assert result["execution"]["status"] == "filled"
@@ -100,17 +102,18 @@ async def test_execution_blocks_oversized_order():
     await store.init()
 
     svc = ExecutionService()
-    svc.mcp = MockRobinhoodMCPClient()
+    mock_client = MockRobinhoodMCPClient()
 
-    with patch("app.services.execution.get_storage", new_callable=AsyncMock):
-        with patch("app.risk.engine.compute_ticker_features", new_callable=AsyncMock) as mock_risk:
-            mock_risk.return_value = MOCK_FEATURES.copy()
-            result = await svc.submit_for_approval(
-                ticker="NVDA",
-                side="buy",
-                quantity=10,
-                limit_price=100,
-            )
+    with patch.object(svc, "_resolve_broker", return_value=(mock_client, "robinhood_agentic")):
+        with patch("app.services.execution.get_storage", new_callable=AsyncMock):
+            with patch("app.risk.engine.compute_ticker_features", new_callable=AsyncMock) as mock_risk:
+                mock_risk.return_value = MOCK_FEATURES.copy()
+                result = await svc.submit_for_approval(
+                    ticker="NVDA",
+                    side="buy",
+                    quantity=10,
+                    limit_price=100,
+                )
 
     assert result["status"] == "blocked"
     await store.close()

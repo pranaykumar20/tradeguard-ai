@@ -23,7 +23,13 @@ async def readiness():
 
     return {
         **report,
-        "phase": 6,
+        "phase": 9,
+        "push_notifications_enabled": settings.push_notifications_enabled,
+        "audit_export_max_days": settings.audit_export_max_days,
+        "platform_health_check_enabled": settings.platform_health_check_enabled,
+        "multi_broker_enabled": settings.multi_broker_enabled,
+        "options_workflow_enabled": settings.options_workflow_enabled,
+        "tax_lot_tracking_enabled": settings.tax_lot_tracking_enabled,
         "news_provider": settings.active_news_provider,
         "regime_detection_enabled": settings.regime_detection_enabled,
         "sec_filings_enabled": settings.sec_filings_enabled,

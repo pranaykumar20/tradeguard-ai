@@ -26,7 +26,7 @@ async def test_health_liveness(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert data["phase"] == 6
+    assert data["phase"] == 9
 
 
 @pytest.mark.asyncio
@@ -36,14 +36,14 @@ async def test_health_ready_endpoint(client):
     data = resp.json()
     assert "status" in data
     assert "checks" in data
-    assert data["phase"] == 6
+    assert data["phase"] == 9
 
 
 @pytest.mark.asyncio
 async def test_api_health_ready(client):
     resp = await client.get("/api/health/ready")
     assert resp.status_code == 200
-    assert resp.json()["phase"] == 6
+    assert resp.json()["phase"] == 9
 
 
 @pytest.mark.asyncio

@@ -132,6 +132,12 @@ class StrategyService:
             side=intent["side"],
             quantity=intent["quantity"],
         )
+        if intent["side"] == "sell" and preview.get("order", {}).get("limit_price"):
+            preview["tax"] = await self.execution.tax.analyze_sell(
+                intent["ticker"],
+                intent["quantity"],
+                preview["order"]["limit_price"],
+            )
         risk = preview["risk"]
         halted, halt_reason = await self.monitoring.is_trading_halted()
 

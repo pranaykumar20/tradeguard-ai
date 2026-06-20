@@ -10,12 +10,22 @@ router = APIRouter()
 execution = ExecutionService()
 
 
+class OptionContract(BaseModel):
+    option_type: str = Field(pattern="^(call|put)$")
+    strike: float = Field(gt=0)
+    expiry: str
+
+
 class OrderPreviewRequest(BaseModel):
     ticker: str
     side: str = Field(pattern="^(buy|sell)$")
     quantity: float = Field(gt=0)
     limit_price: float | None = Field(default=None, gt=0)
     order_type: str = "limit"
+    asset_type: str = Field(default="equity", pattern="^(equity|option)$")
+    broker_id: str | None = None
+    account_id: str | None = None
+    option_contract: OptionContract | None = None
 
 
 class OrderSubmitRequest(OrderPreviewRequest):
@@ -27,8 +37,8 @@ class RejectRequest(BaseModel):
 
 
 @router.get("/quote/{ticker}")
-async def get_quote(ticker: str):
-    return await execution.get_quote(ticker)
+async def get_quote(ticker: str, broker_id: str | None = None):
+    return await execution.get_quote(ticker, broker_id=broker_id)
 
 
 @router.post("/preview")
@@ -39,6 +49,10 @@ async def preview_order(request: OrderPreviewRequest):
         quantity=request.quantity,
         limit_price=request.limit_price,
         order_type=request.order_type,
+        asset_type=request.asset_type,
+        broker_id=request.broker_id,
+        account_id=request.account_id,
+        option_contract=request.option_contract.model_dump() if request.option_contract else None,
     )
 
 
@@ -51,6 +65,10 @@ async def submit_order(request: OrderSubmitRequest):
         limit_price=request.limit_price,
         order_type=request.order_type,
         notes=request.notes,
+        asset_type=request.asset_type,
+        broker_id=request.broker_id,
+        account_id=request.account_id,
+        option_contract=request.option_contract.model_dump() if request.option_contract else None,
     )
     if result["status"] == "blocked":
         raise HTTPException(status_code=422, detail=result)

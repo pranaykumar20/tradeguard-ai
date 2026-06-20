@@ -39,6 +39,34 @@ export type Portfolio = {
   sector_exposure: Record<string, number>;
   positions: Record<string, { shares: number; weight_pct: number; sector: string }>;
   source?: string;
+  broker_id?: string;
+  account_id?: string;
+  account_label?: string;
+};
+
+export type HouseholdPortfolio = {
+  source: string;
+  account_count: number;
+  total_value: number;
+  total_daily_pnl: number;
+  accounts: Portfolio[];
+  positions: Portfolio["positions"];
+  sector_exposure: Record<string, number>;
+};
+
+export type BrokerAccount = {
+  id: string;
+  broker_id: string;
+  account_id: string;
+  label: string;
+  account_type: string;
+  enabled: boolean;
+};
+
+export type OptionContract = {
+  option_type: "call" | "put";
+  strike: number;
+  expiry: string;
 };
 
 export type RiskRules = {
@@ -177,6 +205,8 @@ export type PaperTrade = {
   verdict: string;
   reason: string;
   pnl?: number | null;
+  approval_id?: string | null;
+  source?: string;
   created_at?: string;
 };
 
@@ -205,6 +235,10 @@ export type ApprovalRequest = {
   quantity: number;
   limit_price: number;
   order_type: string;
+  asset_type?: string;
+  broker_id?: string;
+  account_id?: string;
+  option_contract?: OptionContract;
   status: string;
   risk_preview?: TradePreview;
   mcp_preview?: Record<string, unknown>;
@@ -218,13 +252,17 @@ export type ApprovalRequest = {
 export type ExecutionPreview = {
   risk: TradePreview;
   mcp: Record<string, unknown>;
+  broker?: Record<string, unknown>;
   order: {
     ticker: string;
     side: string;
     quantity: number;
     limit_price: number;
     order_type: string;
+    asset_type?: string;
   };
+  tax?: Record<string, unknown>;
+  broker_id?: string;
   mcp_provider: string;
 };
 
@@ -262,6 +300,14 @@ export async function getRiskSnapshot(): Promise<RiskSnapshot> {
 
 export async function getPortfolio(): Promise<Portfolio> {
   return fetchJson<Portfolio>("/api/portfolio");
+}
+
+export async function getHouseholdPortfolio(): Promise<HouseholdPortfolio> {
+  return fetchJson<HouseholdPortfolio>("/api/portfolio?view=household");
+}
+
+export async function getBrokerAccounts(): Promise<{ accounts: BrokerAccount[] }> {
+  return fetchJson("/api/accounts");
 }
 
 export async function getHealth(): Promise<{ status: string; service: string }> {
@@ -356,6 +402,10 @@ export async function previewExecution(body: {
   quantity: number;
   limit_price?: number;
   order_type?: string;
+  asset_type?: "equity" | "option";
+  broker_id?: string;
+  account_id?: string;
+  option_contract?: OptionContract;
 }): Promise<ExecutionPreview> {
   return fetchJson<ExecutionPreview>("/api/execution/preview", {
     method: "POST",
@@ -370,6 +420,10 @@ export async function submitExecution(body: {
   limit_price?: number;
   order_type?: string;
   notes?: string;
+  asset_type?: "equity" | "option";
+  broker_id?: string;
+  account_id?: string;
+  option_contract?: OptionContract;
 }): Promise<{ status: string; approval: ApprovalRequest }> {
   return fetchJson("/api/execution/submit", { method: "POST", body: JSON.stringify(body) });
 }
@@ -606,4 +660,178 @@ export async function runAutomation(): Promise<{ status: string; run?: unknown }
 
 export async function getAutomationAudit(limit = 50): Promise<{ audit: AutomationAuditEntry[] }> {
   return fetchJson(`/api/automation/audit?limit=${limit}`);
+}
+
+export type ExportSummary = {
+  generated_at: string;
+  period_days: number;
+  counts: {
+    journal_trades: number;
+    approval_requests: number;
+    automation_audit: number;
+    alert_events: number;
+  };
+};
+
+export type ReplayEvent = {
+  step: string;
+  at?: string;
+  title: string;
+  detail: string;
+  data?: Record<string, unknown>;
+};
+
+export type ReplayTimeline = {
+  entry_type: string;
+  entry_id: string;
+  events: ReplayEvent[];
+  event_count: number;
+  approval?: Record<string, unknown> | null;
+  journal_trade?: PaperTrade | null;
+};
+
+export type PlatformHealth = {
+  checked_at?: string;
+  healthy: boolean;
+  readiness: { status: string; checks?: Record<string, unknown> };
+  mcp: { enabled: boolean; ok: boolean; latency_ms?: number | null; error?: string | null; latency_alert?: boolean };
+  model: { drift?: number | null; drift_alert?: boolean; accuracy?: number; baseline_accuracy?: number | null };
+};
+
+export type BacktestReport = {
+  strategy: { id: string; name: string; strategy_type: string; config: Record<string, unknown> };
+  period_days: number;
+  journal_trades_in_period: number;
+  matched_action_trades: number;
+  simulated_signals: number;
+  proposal_count: number;
+  proposal_outcomes: Record<string, number>;
+  metrics_all_trades: JournalStats & { sharpe_ratio?: number; max_drawdown_pct?: number };
+  metrics_matched_trades: JournalStats & { sharpe_ratio?: number; max_drawdown_pct?: number };
+  signals: { at?: string; trigger_reason?: string }[];
+};
+
+export async function getAuditExportSummary(days = 90): Promise<ExportSummary> {
+  return fetchJson(`/api/observability/export/summary?days=${days}`);
+}
+
+export async function downloadAuditExport(format: "json" | "csv", days = 90): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (authTokenGetter) {
+    const token = await authTokenGetter();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  const res = await fetch(`${API_BASE}/api/observability/export?format=${format}&days=${days}`, { headers });
+  if (!res.ok) throw new Error("Export failed");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `tradeguard-audit-${days}d.${format}`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function getPlatformHealth(): Promise<PlatformHealth> {
+  return fetchJson<PlatformHealth>("/api/observability/platform");
+}
+
+export async function runPlatformCheck(): Promise<PlatformHealth> {
+  return fetchJson<PlatformHealth>("/api/observability/platform/check", { method: "POST" });
+}
+
+export async function getTradeReplay(id: string, type: "approval" | "trade"): Promise<ReplayTimeline> {
+  const path =
+    type === "approval"
+      ? `/api/observability/replay/approval/${encodeURIComponent(id)}`
+      : `/api/observability/replay/trade/${encodeURIComponent(id)}`;
+  return fetchJson<ReplayTimeline>(path);
+}
+
+export async function backtestStrategy(strategyId: string, days = 90): Promise<BacktestReport> {
+  return fetchJson<BacktestReport>(`/api/observability/backtest/${encodeURIComponent(strategyId)}?days=${days}`);
+}
+
+export type PushNotification = {
+  id: string;
+  title: string;
+  body: string;
+  event_type: string;
+  severity: string;
+  read: boolean;
+  created_at?: string;
+};
+
+export type PushConfig = {
+  enabled: boolean;
+  vapid_public_key: string | null;
+};
+
+export async function getPushConfig(): Promise<PushConfig> {
+  return fetchJson<PushConfig>("/api/push/config");
+}
+
+export async function subscribePush(subscription: {
+  endpoint: string;
+  keys?: Record<string, string>;
+}): Promise<{ status: string; count: number }> {
+  return fetchJson("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify(subscription),
+  });
+}
+
+export async function getPushInbox(
+  limit = 20,
+  unreadOnly = false
+): Promise<{ notifications: PushNotification[]; unread: number }> {
+  return fetchJson(`/api/push/inbox?limit=${limit}&unread_only=${unreadOnly}`);
+}
+
+export async function markPushRead(notificationId: string): Promise<{ notification: PushNotification }> {
+  return fetchJson(`/api/push/inbox/${encodeURIComponent(notificationId)}/read`, { method: "POST" });
+}
+
+export async function markAllPushRead(): Promise<{ marked_read: number }> {
+  return fetchJson("/api/push/inbox/read-all", { method: "POST" });
+}
+
+export type OnboardingStep = {
+  id: string;
+  title: string;
+  description: string;
+  auto: boolean;
+  completed: boolean;
+  manual_confirm: boolean;
+};
+
+export type OnboardingStatus = {
+  steps: OnboardingStep[];
+  completed_count: number;
+  total_steps: number;
+  progress_pct: number;
+  complete: boolean;
+  risk_limits: {
+    max_trade_usd: number;
+    max_daily_loss_usd: number;
+    require_manual_approval: boolean;
+    allow_options: boolean;
+  };
+  mcp: { enabled: boolean; configured: boolean };
+  monitoring_enabled: boolean;
+};
+
+export async function getOnboardingStatus(): Promise<OnboardingStatus> {
+  return fetchJson<OnboardingStatus>("/api/onboarding/status");
+}
+
+export async function completeOnboardingStep(stepId: string): Promise<OnboardingStatus> {
+  return fetchJson<OnboardingStatus>("/api/onboarding/complete", {
+    method: "POST",
+    body: JSON.stringify({ step_id: stepId }),
+  });
+}
+
+export async function resetOnboarding(): Promise<OnboardingStatus> {
+  return fetchJson<OnboardingStatus>("/api/onboarding/reset", { method: "POST" });
 }

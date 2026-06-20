@@ -63,9 +63,9 @@ flowchart TB
 | **Phase 6.2** — ML retrain | **Done** | Journal-augmented retrain, versioning, `/api/intelligence/ml` |
 | **Phase 6.3** — SEC filing RAG | **Done** | Mock 10-K summaries indexed into pgvector RAG |
 | **Phase 6.4** — Regime detection | **Done** | VIX/macro regime, score adjustment, dashboard widget |
-| **Phase 7** — Execution expansion | **Planned** | Multi-broker, tax-aware rebalance, options, households |
-| **Phase 8** — Observability | **Planned** | Trade replay, audit exports, drift alerts, backtesting |
-| **Phase 9** — Product & UX | **Planned** | Mobile approvals, push, strategy builder, onboarding |
+| **Phase 7** — Execution expansion | **Done** | Multi-broker, tax lots, options workflow, household view |
+| **Phase 8** — Observability | **Done** | Trade replay, audit exports, platform alerts, backtesting |
+| **Phase 9** — Product & UX | **Done** | Mobile approvals, push, strategy builder, onboarding |
 
 **Provider pattern:** All external services use `auto` mode — mock when no API key, live when configured. Swap keys at the end; no code changes required.
 
@@ -232,48 +232,48 @@ gantt
 
 ---
 
-## Phase 7 — Execution & Portfolio Expansion *(planned)*
+## Phase 7 — Execution & Portfolio Expansion *(done)*
 
 **Goal:** Beyond single Robinhood Agentic account — more brokers, tax logic, controlled options, households.
 
 | Sub-phase | Description | Status |
 |-----------|-------------|--------|
-| **7.1** Multi-broker abstraction | Broker adapter interface; Robinhood MCP as first impl | Planned |
-| **7.2** Tax-aware rebalancing | Lot tracking, wash-sale awareness in strategy proposals | Planned |
-| **7.3** Options workflow | Mandatory manual approval path; stricter risk caps | Planned |
-| **7.4** Multi-account / household | Link multiple accounts; aggregated exposure view | Planned |
+| **7.1** Multi-broker abstraction | Broker adapter interface; Robinhood MCP + mock IRA | Done |
+| **7.2** Tax-aware rebalancing | Lot tracking, wash-sale awareness in strategy proposals | Done |
+| **7.3** Options workflow | Mandatory manual approval path; stricter risk caps | Done |
+| **7.4** Multi-account / household | Link multiple accounts; aggregated exposure view | Done |
 
-**Gate:** Household dashboard shows combined exposure; options require explicit approval every time.
+**Gate:** Household dashboard shows combined exposure; options require explicit approval every time. ✅
 
 ---
 
-## Phase 8 — Observability & Compliance *(planned)*
+## Phase 8 — Observability & Compliance *(done)*
 
 **Goal:** Auditability, incident response, and strategy validation before live capital.
 
 | Sub-phase | Description | Status |
 |-----------|-------------|--------|
-| **8.1** Trade replay & post-mortem | Timeline UI per trade; decision → risk → execution chain | Planned |
-| **8.2** Regulatory-style audit exports | CSV/JSON export of journal, approvals, automation log | Planned |
-| **8.3** Platform alerting | MCP failure, API latency, model drift alerts | Planned |
-| **8.4** Journal backtesting | Replay strategies against historical journal entries | Planned |
+| **8.1** Trade replay & post-mortem | Timeline UI per trade; decision → risk → execution chain | Done |
+| **8.2** Regulatory-style audit exports | CSV/JSON export of journal, approvals, automation log | Done |
+| **8.3** Platform alerting | MCP failure, API latency, model drift alerts | Done |
+| **8.4** Journal backtesting | Replay strategies against historical journal entries | Done |
 
-**Gate:** One-click export of 90-day audit trail; backtest report for any strategy.
+**Gate:** One-click export of 90-day audit trail; backtest report for any strategy. ✅
 
 ---
 
-## Phase 9 — Product & UX *(planned)*
+## Phase 9 — Product & UX *(done)*
 
 **Goal:** Production-grade UX for operators approving trades on the go.
 
 | Sub-phase | Description | Status |
 |-----------|-------------|--------|
-| **9.1** Mobile-friendly approvals | Responsive `/approvals`; touch-first approve/reject | Planned |
-| **9.2** Push notifications | Web push for BLOCK / halt / pending approval | Planned |
-| **9.3** Visual strategy builder | Rule builder UI replacing raw JSON config | Planned |
-| **9.4** Agentic onboarding wizard | Step-by-step MCP connect, fund account, set limits | Planned |
+| **9.1** Mobile-friendly approvals | Responsive `/approvals`; touch-first approve/reject | Done |
+| **9.2** Push notifications | Web push for BLOCK / halt / pending approval | Done |
+| **9.3** Visual strategy builder | Rule builder UI replacing raw JSON config | Done |
+| **9.4** Agentic onboarding wizard | Step-by-step MCP connect, fund account, set limits | Done |
 
-**Gate:** Approve a trade from mobile; complete onboarding without reading MCP-SETUP.md.
+**Gate:** Approve a trade from mobile; complete onboarding without reading MCP-SETUP.md. ✅
 
 ---
 

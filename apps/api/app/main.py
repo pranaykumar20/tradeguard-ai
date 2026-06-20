@@ -13,6 +13,8 @@ from app.core.user_context import for_each_user
 from app.db.storage import close_storage, init_storage
 from app.rag.service import RAGService
 from app.services.ml_bootstrap import ensure_direction_model
+from app.services.accounts import AccountService
+from app.services.platform_health import PlatformHealthService
 from app.services.sec_filings import SecFilingService
 from app.tasks.market import refresh_market_features_async
 from app.tasks.monitoring import run_monitoring_check_async
@@ -33,6 +35,9 @@ async def lifespan(app: FastAPI):
     await for_each_user(run_monitoring_check_async)
     strategy_service = StrategyService()
     await for_each_user(strategy_service.ensure_defaults)
+    await for_each_user(AccountService().ensure_defaults)
+    if settings.platform_health_check_enabled:
+        await PlatformHealthService().check(emit_alerts=False)
     await for_each_user(ValidationService().build_report)
     await for_each_user(run_strategy_eval_async)
     yield
@@ -42,7 +47,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="AI Stock Risk Manager — ML signals, RAG, risk engine, Robinhood MCP",
-    version="0.6.0",
+    version="0.9.0",
     lifespan=lifespan,
 )
 
@@ -64,7 +69,7 @@ async def health():
         "status": "ok",
         "service": settings.app_name,
         "env": settings.app_env,
-        "phase": 6,
+        "phase": 9,
         "auth_enabled": settings.auth_enabled,
         "news_provider": settings.active_news_provider,
         "regime_detection_enabled": settings.regime_detection_enabled,
