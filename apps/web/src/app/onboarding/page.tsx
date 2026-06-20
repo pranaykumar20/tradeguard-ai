@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import {
   completeOnboardingStep,
@@ -15,11 +15,6 @@ export default function OnboardingPage() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    const data = await getOnboardingStatus();
-    setStatus(data);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;

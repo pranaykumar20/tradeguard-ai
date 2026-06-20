@@ -54,10 +54,27 @@ export function PushInboxBell() {
 
   useEffect(() => {
     if (!enabled) return;
-    void refresh();
-    const id = window.setInterval(() => void refresh(), POLL_MS);
-    return () => window.clearInterval(id);
-  }, [enabled, refresh]);
+    let cancelled = false;
+
+    async function loadInbox() {
+      try {
+        const data = await getPushInbox(20);
+        if (!cancelled) {
+          setItems(data.notifications);
+          setUnread(data.unread);
+        }
+      } catch {
+        // inbox optional when API offline
+      }
+    }
+
+    void loadInbox();
+    const id = window.setInterval(() => void loadInbox(), POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [enabled]);
 
   async function handleSubscribe() {
     if (!vapidKey || !("serviceWorker" in navigator) || !("PushManager" in window)) return;

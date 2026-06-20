@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import {
   backtestStrategy,
@@ -19,15 +20,90 @@ import {
 } from "@/lib/api";
 import { Btn, Card, PageHeader, Row, StatCard } from "@/components/ui/Card";
 
+function TradeReplayPanel({ onError }: { onError: (msg: string) => void }) {
+  const searchParams = useSearchParams();
+  const deepReplay = searchParams.get("replay");
+  const deepType: "approval" | "trade" = searchParams.get("type") === "approval" ? "approval" : "trade";
+  const [replayId, setReplayId] = useState(deepReplay ?? "");
+  const [replayType, setReplayType] = useState<"approval" | "trade">(deepType);
+  const [replay, setReplay] = useState<ReplayTimeline | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!deepReplay) return;
+    let cancelled = false;
+    void getTradeReplay(deepReplay, deepType)
+      .then((data) => {
+        if (!cancelled) setReplay(data);
+      })
+      .catch(() => {
+        if (!cancelled) onError("Replay not found");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deepReplay, deepType, onError]);
+
+  async function handleReplay() {
+    if (!replayId.trim()) return;
+    setLoading(true);
+    onError("");
+    try {
+      setReplay(await getTradeReplay(replayId.trim(), replayType));
+    } catch {
+      onError("Replay not found");
+      setReplay(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Card>
+      <h2 className="text-lg font-extrabold">Trade Replay</h2>
+      <p className="tg-sub mt-2 text-sm">Post-mortem timeline: decision → risk → execution.</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <select
+          className="rounded-lg border border-card-border bg-background px-3 py-2 text-sm"
+          value={replayType}
+          onChange={(e) => setReplayType(e.target.value as "approval" | "trade")}
+        >
+          <option value="approval">Approval ID</option>
+          <option value="trade">Trade ID</option>
+        </select>
+        <input
+          className="min-w-[220px] flex-1 rounded-lg border border-card-border bg-background px-3 py-2 text-sm"
+          placeholder="Paste ID from journal or approvals"
+          value={replayId}
+          onChange={(e) => setReplayId(e.target.value)}
+        />
+        <Btn disabled={loading} onClick={() => void handleReplay()}>
+          Load replay
+        </Btn>
+      </div>
+      {replay && (
+        <div className="mt-4 space-y-3">
+          {replay.events.map((event) => (
+            <div key={`${event.step}-${event.at}`} className="rounded-[12px] border border-card-border p-3 text-sm">
+              <div className="font-bold">{event.title}</div>
+              <div className="tg-sub text-xs">
+                {event.at} · {event.step}
+              </div>
+              <div className="mt-1">{event.detail}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function ObservabilityPage() {
   const [summary, setSummary] = useState<ExportSummary | null>(null);
   const [platform, setPlatform] = useState<PlatformHealth | null>(null);
   const [strategies, setStrategies] = useState<TradeStrategy[]>([]);
   const [selectedStrategy, setSelectedStrategy] = useState("");
   const [backtest, setBacktest] = useState<BacktestReport | null>(null);
-  const [replayId, setReplayId] = useState("");
-  const [replayType, setReplayType] = useState<"approval" | "trade">("approval");
-  const [replay, setReplay] = useState<ReplayTimeline | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,18 +131,6 @@ export default function ObservabilityPage() {
     };
   }, []);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const replay = params.get("replay");
-    const type = params.get("type");
-    if (!replay) return;
-    setReplayId(replay);
-    setReplayType(type === "approval" ? "approval" : "trade");
-    void getTradeReplay(replay, type === "approval" ? "approval" : "trade")
-      .then(setReplay)
-      .catch(() => setError("Replay not found"));
-  }, []);
-
   async function handleExport(format: "json" | "csv") {
     await downloadAuditExport(format, 90);
   }
@@ -85,20 +149,6 @@ export default function ObservabilityPage() {
     setLoading(true);
     try {
       setBacktest(await backtestStrategy(selectedStrategy, 90));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleReplay() {
-    if (!replayId.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setReplay(await getTradeReplay(replayId.trim(), replayType));
-    } catch {
-      setError("Replay not found");
-      setReplay(null);
     } finally {
       setLoading(false);
     }
@@ -159,40 +209,9 @@ export default function ObservabilityPage() {
         </div>
 
         <div className="mt-[18px] grid gap-[18px] lg:grid-cols-2">
-          <Card>
-            <h2 className="text-lg font-extrabold">Trade Replay</h2>
-            <p className="tg-sub mt-2 text-sm">Post-mortem timeline: decision → risk → execution.</p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <select
-                className="rounded-lg border border-card-border bg-background px-3 py-2 text-sm"
-                value={replayType}
-                onChange={(e) => setReplayType(e.target.value as "approval" | "trade")}
-              >
-                <option value="approval">Approval ID</option>
-                <option value="trade">Trade ID</option>
-              </select>
-              <input
-                className="min-w-[220px] flex-1 rounded-lg border border-card-border bg-background px-3 py-2 text-sm"
-                placeholder="Paste ID from journal or approvals"
-                value={replayId}
-                onChange={(e) => setReplayId(e.target.value)}
-              />
-              <Btn disabled={loading} onClick={handleReplay}>
-                Load replay
-              </Btn>
-            </div>
-            {replay && (
-              <div className="mt-4 space-y-3">
-                {replay.events.map((event) => (
-                  <div key={`${event.step}-${event.at}`} className="rounded-[12px] border border-card-border p-3 text-sm">
-                    <div className="font-bold">{event.title}</div>
-                    <div className="tg-sub text-xs">{event.at} · {event.step}</div>
-                    <div className="mt-1">{event.detail}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+          <Suspense fallback={<Card><p className="text-muted text-sm">Loading replay…</p></Card>}>
+            <TradeReplayPanel onError={(msg) => setError(msg || null)} />
+          </Suspense>
 
           <Card>
             <h2 className="text-lg font-extrabold">Strategy Backtest</h2>
