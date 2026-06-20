@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import advanced_risk, analysis, chat, execution, health, journal, portfolio, risk
+from app.api.routes import advanced_risk, analysis, automation, chat, execution, health, journal, monitoring, portfolio, risk, strategies, validation
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
@@ -13,3 +13,7 @@ api_router.include_router(portfolio.router, prefix="/portfolio", tags=["portfoli
 api_router.include_router(journal.router, prefix="/journal", tags=["journal"])
 api_router.include_router(advanced_risk.router, prefix="/risk", tags=["advanced-risk"])
 api_router.include_router(execution.router, prefix="/execution", tags=["execution"])
+api_router.include_router(monitoring.router, prefix="/monitoring", tags=["monitoring"])
+api_router.include_router(strategies.router, prefix="/strategies", tags=["strategies"])
+api_router.include_router(validation.router, prefix="/validation", tags=["validation"])
+api_router.include_router(automation.router, prefix="/automation", tags=["automation"])

@@ -15,13 +15,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import settings
 from app.db.models import (
+    AlertEvent,
+    AppState,
     ApprovalRequest,
+    AutomationAuditLog,
     Base,
     ChatMessage,
     ChatSession,
     MarketFeatureCache,
     PaperTrade,
     RAGDocument,
+    StrategyProposal,
+    TradeStrategy,
 )
 
 logger = structlog.get_logger()
@@ -105,6 +110,60 @@ class StorageBackend(ABC):
     ) -> list[dict]:
         pass
 
+    @abstractmethod
+    async def get_app_state(self, key: str) -> dict | None:
+        pass
+
+    @abstractmethod
+    async def set_app_state(self, key: str, value: dict) -> dict:
+        pass
+
+    @abstractmethod
+    async def create_alert_event(self, event: dict) -> dict:
+        pass
+
+    @abstractmethod
+    async def list_alert_events(self, limit: int = 50) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def create_trade_strategy(self, strategy: dict) -> dict:
+        pass
+
+    @abstractmethod
+    async def update_trade_strategy(self, strategy_id: str, updates: dict) -> dict | None:
+        pass
+
+    @abstractmethod
+    async def get_trade_strategy(self, strategy_id: str) -> dict | None:
+        pass
+
+    @abstractmethod
+    async def list_trade_strategies(self) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def delete_trade_strategy(self, strategy_id: str) -> bool:
+        pass
+
+    @abstractmethod
+    async def create_strategy_proposal(self, proposal: dict) -> dict:
+        pass
+
+    @abstractmethod
+    async def list_strategy_proposals(
+        self, strategy_id: str | None = None, limit: int = 50
+    ) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def create_automation_audit(self, entry: dict) -> dict:
+        pass
+
+    @abstractmethod
+    async def list_automation_audit(self, limit: int = 50) -> list[dict]:
+        pass
+
 
 class MemoryStorageBackend(StorageBackend):
     backend_name = "memory"
@@ -117,6 +176,11 @@ class MemoryStorageBackend(StorageBackend):
             "approval_requests": [],
             "rag_documents": [],
             "feature_cache": {},
+            "app_state": {},
+            "alert_events": [],
+            "trade_strategies": [],
+            "strategy_proposals": [],
+            "automation_audit": [],
         }
 
     async def init(self) -> None:
@@ -250,6 +314,100 @@ class MemoryStorageBackend(StorageBackend):
             rows = [r for r in rows if r.get("status") == status]
         return rows[:limit]
 
+    async def get_app_state(self, key: str) -> dict | None:
+        return self._data.get("app_state", {}).get(key)
+
+    async def set_app_state(self, key: str, value: dict) -> dict:
+        self._data.setdefault("app_state", {})[key] = value
+        self._persist()
+        return value
+
+    async def create_alert_event(self, event: dict) -> dict:
+        row = {
+            "id": str(uuid4()),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **event,
+        }
+        self._data.setdefault("alert_events", []).insert(0, row)
+        self._persist()
+        return row
+
+    async def list_alert_events(self, limit: int = 50) -> list[dict]:
+        return self._data.get("alert_events", [])[:limit]
+
+    async def create_trade_strategy(self, strategy: dict) -> dict:
+        now = datetime.now(timezone.utc).isoformat()
+        row = {
+            "id": str(uuid4()),
+            "created_at": now,
+            "updated_at": now,
+            "auto_approve": False,
+            "enabled": False,
+            **strategy,
+        }
+        self._data.setdefault("trade_strategies", []).append(row)
+        self._persist()
+        return row
+
+    async def update_trade_strategy(self, strategy_id: str, updates: dict) -> dict | None:
+        for strategy in self._data.get("trade_strategies", []):
+            if strategy["id"] == strategy_id:
+                strategy.update(updates)
+                strategy["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self._persist()
+                return strategy
+        return None
+
+    async def get_trade_strategy(self, strategy_id: str) -> dict | None:
+        return next(
+            (s for s in self._data.get("trade_strategies", []) if s["id"] == strategy_id),
+            None,
+        )
+
+    async def list_trade_strategies(self) -> list[dict]:
+        return list(self._data.get("trade_strategies", []))
+
+    async def delete_trade_strategy(self, strategy_id: str) -> bool:
+        strategies = self._data.get("trade_strategies", [])
+        before = len(strategies)
+        self._data["trade_strategies"] = [s for s in strategies if s["id"] != strategy_id]
+        if len(self._data["trade_strategies"]) < before:
+            self._persist()
+            return True
+        return False
+
+    async def create_strategy_proposal(self, proposal: dict) -> dict:
+        row = {
+            "id": str(uuid4()),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_at": None,
+            **proposal,
+        }
+        self._data.setdefault("strategy_proposals", []).insert(0, row)
+        self._persist()
+        return row
+
+    async def list_strategy_proposals(
+        self, strategy_id: str | None = None, limit: int = 50
+    ) -> list[dict]:
+        rows = self._data.get("strategy_proposals", [])
+        if strategy_id:
+            rows = [r for r in rows if r.get("strategy_id") == strategy_id]
+        return rows[:limit]
+
+    async def create_automation_audit(self, entry: dict) -> dict:
+        row = {
+            "id": str(uuid4()),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **entry,
+        }
+        self._data.setdefault("automation_audit", []).insert(0, row)
+        self._persist()
+        return row
+
+    async def list_automation_audit(self, limit: int = 50) -> list[dict]:
+        return self._data.get("automation_audit", [])[:limit]
+
 
 class PostgresStorageBackend(StorageBackend):
     backend_name = "postgres"
@@ -305,7 +463,12 @@ class PostgresStorageBackend(StorageBackend):
 
     async def create_paper_trade(self, trade: dict) -> dict:
         async with self._session() as session:
-            row = PaperTrade(**trade)
+            payload = dict(trade)
+            if isinstance(payload.get("created_at"), str):
+                payload["created_at"] = datetime.fromisoformat(
+                    payload["created_at"].replace("Z", "+00:00")
+                )
+            row = PaperTrade(**payload)
             session.add(row)
             await session.commit()
             await session.refresh(row)
@@ -480,6 +643,176 @@ class PostgresStorageBackend(StorageBackend):
                 query = query.where(ApprovalRequest.status == status)
             result = await session.execute(query)
             return [self._approval_to_dict(r) for r in result.scalars().all()]
+
+    async def get_app_state(self, key: str) -> dict | None:
+        async with self._session() as session:
+            row = await session.get(AppState, key)
+            return dict(row.value) if row and row.value else None
+
+    async def set_app_state(self, key: str, value: dict) -> dict:
+        async with self._session() as session:
+            row = await session.get(AppState, key)
+            if row:
+                row.value = value
+            else:
+                session.add(AppState(key=key, value=value))
+            await session.commit()
+            return value
+
+    async def create_alert_event(self, event: dict) -> dict:
+        async with self._session() as session:
+            row = AlertEvent(**event)
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._alert_to_dict(row)
+
+    async def list_alert_events(self, limit: int = 50) -> list[dict]:
+        async with self._session() as session:
+            result = await session.execute(
+                select(AlertEvent).order_by(AlertEvent.created_at.desc()).limit(limit)
+            )
+            return [self._alert_to_dict(r) for r in result.scalars().all()]
+
+    async def create_trade_strategy(self, strategy: dict) -> dict:
+        async with self._session() as session:
+            row = TradeStrategy(**strategy)
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._strategy_to_dict(row)
+
+    async def update_trade_strategy(self, strategy_id: str, updates: dict) -> dict | None:
+        async with self._session() as session:
+            row = await session.get(TradeStrategy, strategy_id)
+            if not row:
+                return None
+            for key, val in updates.items():
+                setattr(row, key, val)
+            await session.commit()
+            await session.refresh(row)
+            return self._strategy_to_dict(row)
+
+    async def get_trade_strategy(self, strategy_id: str) -> dict | None:
+        async with self._session() as session:
+            row = await session.get(TradeStrategy, strategy_id)
+            return self._strategy_to_dict(row) if row else None
+
+    async def list_trade_strategies(self) -> list[dict]:
+        async with self._session() as session:
+            result = await session.execute(
+                select(TradeStrategy).order_by(TradeStrategy.created_at.asc())
+            )
+            return [self._strategy_to_dict(r) for r in result.scalars().all()]
+
+    async def delete_trade_strategy(self, strategy_id: str) -> bool:
+        async with self._session() as session:
+            row = await session.get(TradeStrategy, strategy_id)
+            if not row:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def create_strategy_proposal(self, proposal: dict) -> dict:
+        async with self._session() as session:
+            row = StrategyProposal(**proposal)
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._proposal_to_dict(row)
+
+    async def list_strategy_proposals(
+        self, strategy_id: str | None = None, limit: int = 50
+    ) -> list[dict]:
+        async with self._session() as session:
+            query = (
+                select(StrategyProposal)
+                .order_by(StrategyProposal.created_at.desc())
+                .limit(limit)
+            )
+            if strategy_id:
+                query = query.where(StrategyProposal.strategy_id == strategy_id)
+            result = await session.execute(query)
+            return [self._proposal_to_dict(r) for r in result.scalars().all()]
+
+    async def create_automation_audit(self, entry: dict) -> dict:
+        async with self._session() as session:
+            row = AutomationAuditLog(**entry)
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._automation_audit_to_dict(row)
+
+    async def list_automation_audit(self, limit: int = 50) -> list[dict]:
+        async with self._session() as session:
+            result = await session.execute(
+                select(AutomationAuditLog)
+                .order_by(AutomationAuditLog.created_at.desc())
+                .limit(limit)
+            )
+            return [self._automation_audit_to_dict(r) for r in result.scalars().all()]
+
+    @staticmethod
+    def _automation_audit_to_dict(row: AutomationAuditLog) -> dict:
+        return {
+            "id": row.id,
+            "event_type": row.event_type,
+            "detail": row.detail,
+            "ticker": row.ticker,
+            "strategy_id": row.strategy_id,
+            "strategy_name": row.strategy_name,
+            "verdict": row.verdict,
+            "meta": row.meta or {},
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def _strategy_to_dict(row: TradeStrategy) -> dict:
+        return {
+            "id": row.id,
+            "name": row.name,
+            "description": row.description,
+            "strategy_type": row.strategy_type,
+            "config": row.config or {},
+            "auto_approve": row.auto_approve,
+            "enabled": row.enabled,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+
+    @staticmethod
+    def _proposal_to_dict(row: StrategyProposal) -> dict:
+        return {
+            "id": row.id,
+            "strategy_id": row.strategy_id,
+            "strategy_name": row.strategy_name,
+            "ticker": row.ticker,
+            "side": row.side,
+            "quantity": row.quantity,
+            "limit_price": row.limit_price,
+            "trigger_context": row.trigger_context,
+            "trigger_reason": row.trigger_reason,
+            "risk_preview": row.risk_preview,
+            "status": row.status,
+            "approval_id": row.approval_id,
+            "execution_result": row.execution_result,
+            "notes": row.notes,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        }
+
+    @staticmethod
+    def _alert_to_dict(row: AlertEvent) -> dict:
+        return {
+            "id": row.id,
+            "event_type": row.event_type,
+            "severity": row.severity,
+            "title": row.title,
+            "detail": row.detail,
+            "channels_sent": row.channels_sent or [],
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
 
     @staticmethod
     def _approval_to_dict(row: ApprovalRequest) -> dict:

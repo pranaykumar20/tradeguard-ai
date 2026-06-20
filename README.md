@@ -48,10 +48,12 @@ tradeguard-ai/
 
 ## Phase roadmap
 
-1. **Phase 1 — Analysis only** (current scaffold): portfolio risk, sector exposure, CAUTION/BLOCK decisions, no execution
-2. **Phase 2 — Paper trading**: trade plans, journal, 100-trade track record
-3. **Phase 3 — Small Agentic account**: manual approval, stocks/ETFs only, max position rules
-4. **Phase 4 — Automation**: only after 3+ months positive results; still no options automation
+See **[docs/PLAN.md](docs/PLAN.md)** for the full living roadmap with sub-phase status.
+
+1. **Phase 1 — Analysis only**: portfolio risk, sector exposure, CAUTION/BLOCK decisions, no execution — **Done**
+2. **Phase 2 — Paper trading**: trade plans, journal, 100-trade track record — **Done**
+3. **Phase 3 — Small Agentic account**: manual approval, stocks/ETFs only, max position rules — **Done**
+4. **Phase 4 — Automation**: monitoring, strategies, validation gate, constrained automation — **Done**
 
 ## Quick start
 

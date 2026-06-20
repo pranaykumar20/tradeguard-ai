@@ -7,12 +7,20 @@ from app.db.storage import get_storage
 from app.mcp.factory import get_mcp_client
 from app.portfolio.demo import demo_portfolio
 from app.risk.engine import RiskEngine
+from app.services.monitoring import MonitoringService
 
 
 class ExecutionService:
     def __init__(self):
         self.risk = RiskEngine()
         self.mcp = get_mcp_client()
+        self.monitoring = MonitoringService()
+
+    async def _trading_halt_block(self) -> str | None:
+        halted, reason = await self.monitoring.is_trading_halted()
+        if halted:
+            return f"Trading halted: {reason}"
+        return None
 
     async def _portfolio_for_risk(self) -> dict:
         if settings.robinhood_mcp_enabled:
@@ -50,6 +58,7 @@ class ExecutionService:
             "order_type": order_type,
         }
 
+        halt_block = await self._trading_halt_block()
         risk_preview = await self.risk.preview_trade(
             ticker=ticker,
             side=side,
@@ -58,6 +67,10 @@ class ExecutionService:
             order_type=order_type,
             portfolio=portfolio,
         )
+        if halt_block:
+            risk_preview["blocks"] = list(risk_preview.get("blocks", [])) + [halt_block]
+            risk_preview["allowed"] = False
+            risk_preview["verdict"] = "BLOCK"
         mcp_preview = await self.mcp.preview_order(order)
 
         return {
@@ -85,6 +98,7 @@ class ExecutionService:
         )
         risk = preview["risk"]
         if not risk["allowed"]:
+            await self.monitoring.notify_block(ticker.upper(), risk.get("blocks", []))
             return {
                 "status": "blocked",
                 "reason": "; ".join(risk["blocks"]),

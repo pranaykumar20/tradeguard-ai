@@ -21,11 +21,16 @@ async def readiness():
 
     return {
         "status": "ready",
-        "phase": 3,
+        "phase": 4,
         "storage_backend": storage_backend,
         "market_data_provider": settings.active_market_provider,
         "embedding_provider": settings.active_embedding_provider,
         "mcp_provider": settings.active_mcp_provider,
+        "alert_provider": settings.active_alert_provider,
+        "monitoring_enabled": settings.monitoring_enabled,
+        "strategies_enabled": settings.strategies_enabled,
+        "validation_gate_enabled": settings.validation_gate_enabled,
+        "automation_feature_enabled": settings.automation_feature_enabled,
         "mcp_configured": mcp.is_configured,
         "mcp_enabled": settings.robinhood_mcp_enabled,
         "llm_configured": bool(settings.openai_api_key or settings.anthropic_api_key),

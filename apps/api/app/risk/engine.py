@@ -118,6 +118,12 @@ class RiskEngine:
         portfolio = portfolio or demo_portfolio()
         blocks.extend(self._daily_loss_blocks(portfolio))
 
+        from app.services.monitoring import MonitoringService
+
+        halted, halt_reason = await MonitoringService().is_trading_halted()
+        if halted:
+            blocks.append(f"Trading halted: {halt_reason}")
+
         if asset_type in self.rules.blocked_asset_types:
             blocks.append(f"{asset_type} trades are blocked by policy.")
 

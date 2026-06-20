@@ -71,6 +71,28 @@ class MarketFeatureCache(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class AlertEvent(Base):
+    __tablename__ = "alert_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    severity: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str] = mapped_column(String(255))
+    detail: Mapped[str] = mapped_column(Text)
+    channels_sent: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AppState(Base):
+    __tablename__ = "app_state"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
 
@@ -88,3 +110,54 @@ class ApprovalRequest(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TradeStrategy(Base):
+    __tablename__ = "trade_strategies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
+    strategy_type: Mapped[str] = mapped_column(String(64))
+    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    auto_approve: Mapped[bool] = mapped_column(default=False)
+    enabled: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StrategyProposal(Base):
+    __tablename__ = "strategy_proposals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    strategy_id: Mapped[str] = mapped_column(String(36), index=True)
+    strategy_name: Mapped[str] = mapped_column(String(128))
+    ticker: Mapped[str] = mapped_column(String(16))
+    side: Mapped[str] = mapped_column(String(8))
+    quantity: Mapped[float] = mapped_column(Float)
+    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trigger_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    trigger_reason: Mapped[str] = mapped_column(Text, default="")
+    risk_preview: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    approval_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    execution_result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AutomationAuditLog(Base):
+    __tablename__ = "automation_audit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    detail: Mapped[str] = mapped_column(Text)
+    ticker: Mapped[str] = mapped_column(String(16), default="")
+    strategy_id: Mapped[str] = mapped_column(String(36), default="")
+    strategy_name: Mapped[str] = mapped_column(String(128), default="")
+    verdict: Mapped[str] = mapped_column(String(20), default="")
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

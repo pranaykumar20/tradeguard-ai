@@ -11,6 +11,10 @@ const NAV: { href: string; label: string; badge?: string }[] = [
   { href: "/analysis", label: "Stock Analyzer" },
   { href: "/journal", label: "Trade Journal" },
   { href: "/approvals", label: "Trade Approval" },
+  { href: "/monitoring", label: "Monitoring" },
+  { href: "/strategies", label: "Strategies" },
+  { href: "/validation", label: "Validation Gate" },
+  { href: "/automation", label: "Automation" },
 ];
 
 export function Sidebar() {
@@ -21,7 +25,7 @@ export function Sidebar() {
       <div className="text-2xl font-extrabold tracking-tight">
         TradeGuard <span className="text-teal">AI</span>
       </div>
-      <div className="tg-sub mt-1">Phase 3 · Guarded execution & approvals</div>
+      <div className="tg-sub mt-1">Phase 4 complete · Guarded automation</div>
 
       <nav className="mt-7 flex-1 space-y-1">
         {NAV.map((item) => {
