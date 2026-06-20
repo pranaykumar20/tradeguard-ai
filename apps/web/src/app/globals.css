@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0b0f14;
+  --foreground: #e8edf4;
+  --card: #121820;
+  --card-border: #1e2836;
+  --accent: #22c55e;
+  --accent-dim: #166534;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --muted: #8b9bb4;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-border: var(--card-border);
+  --color-accent: var(--accent);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+.tg-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tg-scroll::-webkit-scrollbar-thumb {
+  background: #2a3544;
+  border-radius: 999px;
+}
