@@ -67,9 +67,9 @@ Starts PostgreSQL (pgvector) on `localhost:5433` and Redis on `localhost:6380`.
 
 ```bash
 cd apps/api
-python -m venv .venv
+python3.12 -m venv .venv    # requires Python 3.12 (3.14 is not supported yet)
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -U pip && pip install -r requirements.txt
 cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
