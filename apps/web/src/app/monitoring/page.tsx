@@ -152,12 +152,12 @@ export default function MonitoringPage() {
                 <span className="text-muted">Drawdown alert threshold</span>
                 <span>{status?.drawdown_alert_pct ?? 8}%</span>
               </div>
-              {status?.trading_state?.last_check_at && (
+              {status?.trading_state?.last_check_at != null ? (
                 <div className="flex justify-between text-sm">
                   <span className="text-muted">Last check</span>
                   <span>{String(status.trading_state.last_check_at)}</span>
                 </div>
-              )}
+              ) : null}
             </div>
 
             {lastCheck && (

@@ -57,3 +57,4 @@ apps/api/.data/
 
 # Turbo
 .turbo/
+.vercel
