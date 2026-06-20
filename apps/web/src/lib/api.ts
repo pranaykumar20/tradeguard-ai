@@ -32,6 +32,16 @@ export type ChatResponse = {
   trade_preview?: TradePreview;
   rag_sources?: RagSource[];
   rag_tools?: string[];
+  web_sources?: WebSource[];
+};
+
+export type WebSource = {
+  title: string;
+  summary: string;
+  source: string;
+  published_at: string;
+  sentiment: number;
+  url: string;
 };
 
 export type RagSource = {

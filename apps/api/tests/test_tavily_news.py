@@ -67,6 +67,59 @@ async def test_factory_prefers_tavily_in_auto(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_for_chat_ticker(monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.tavily_api_key", "tvly-test")
+
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = lambda: None
+    mock_response.json = lambda: {
+        "results": [
+            {
+                "title": "NVDA hits new high on AI demand",
+                "content": "Chipmaker rally continues.",
+                "url": "https://bloomberg.com/nvda",
+                "published_date": "2026-06-20T10:00:00Z",
+            }
+        ]
+    }
+
+    with patch("app.providers.news.tavily.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+        data = await NewsService().search_for_chat(
+            "Should I buy more NVDA today?", ticker="NVDA", limit=3
+        )
+
+    assert data["live_search"] is True
+    assert data["ticker"] == "NVDA"
+    assert len(data["headlines"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_for_chat_general(monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.tavily_api_key", "tvly-test")
+
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = lambda: None
+    mock_response.json = lambda: {
+        "results": [
+            {
+                "title": "Tech sector weighs on S&P 500",
+                "content": "Mega-cap tech led declines.",
+                "url": "https://cnbc.com/markets",
+                "published_date": "2026-06-20T10:00:00Z",
+            }
+        ]
+    }
+
+    with patch("app.providers.news.tavily.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+        data = await NewsService().search_for_chat("What is my biggest portfolio risk?", limit=3)
+
+    assert data["live_search"] is True
+    assert data["headline_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_market_pulse_without_tavily():
     data = await NewsService().get_market_pulse(limit=5)
     assert data["live_search"] is False

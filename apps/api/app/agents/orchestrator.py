@@ -12,7 +12,7 @@ from app.rag.service import RAGService, format_chunks_for_context
 from app.rag.tools import RAGTools
 from app.risk.engine import RiskEngine, RiskVerdict
 from app.services.features import compute_ticker_features
-from app.services.news import NewsService
+from app.services.news import NewsService, format_news_for_context
 from app.db.storage import get_storage
 
 _news = NewsService()
@@ -37,17 +37,26 @@ class TradeGuardOrchestrator:
             logger.warning("rag_retrieval_failed", error=str(exc), ticker=ticker)
             return [], []
 
+    async def _fetch_web_context(self, message: str, ticker: str | None) -> dict:
+        try:
+            return await _news.search_for_chat(message, ticker=ticker, limit=5)
+        except Exception as exc:
+            logger.warning("web_search_failed", error=str(exc), ticker=ticker)
+            return {"headlines": [], "live_search": False}
+
     async def handle_message(self, message: str, session_id: str | None = None) -> dict:
         sid = session_id or str(uuid.uuid4())
         tickers = list(dict.fromkeys(m.upper() for m in TICKER_PATTERN.findall(message)))
+        primary_ticker = tickers[0] if tickers else None
 
-        rag_chunks, rag_tools_used = await self._retrieve_rag(
-            message, tickers[0] if tickers else None
-        )
+        rag_chunks, rag_tools_used = await self._retrieve_rag(message, primary_ticker)
+        web_data = await self._fetch_web_context(message, primary_ticker)
         snapshot = await self.risk.portfolio_snapshot()
 
         if not tickers:
-            result = await self._general_response(sid, message, snapshot, rag_chunks, rag_tools_used)
+            result = await self._general_response(
+                sid, message, snapshot, rag_chunks, rag_tools_used, web_data
+            )
             storage = await get_storage()
             await storage.save_chat_message(sid, "user", message)
             await storage.save_chat_message(sid, "assistant", result["reply"], meta=result)
@@ -56,7 +65,7 @@ class TradeGuardOrchestrator:
         primary = tickers[0]
         features = await compute_ticker_features(primary)
         scores = score_ticker(features, primary)
-        news_data = await _news.get_ticker_news(primary, limit=3)
+        news_data = web_data
         verdict = self.risk.evaluate_ticker(primary, features, scores)
 
         trade_preview = None
@@ -103,13 +112,15 @@ class TradeGuardOrchestrator:
             "suggested_actions": suggested,
             "rag_sources": [c.to_dict() for c in rag_chunks],
             "rag_tools": rag_tools_used,
+            "web_sources": news_data.get("headlines", [])[:5],
         }
         if trade_preview:
             result["trade_preview"] = trade_preview
-        if news_data:
+        if news_data.get("headlines"):
             result["news"] = {
                 "sentiment_label": news_data.get("sentiment_label"),
-                "headlines": news_data.get("headlines", [])[:3],
+                "headlines": news_data.get("headlines", [])[:5],
+                "live_search": news_data.get("live_search", False),
             }
 
         storage = await get_storage()
@@ -164,10 +175,7 @@ class TradeGuardOrchestrator:
             f"Tech exposure: {snapshot['sector_exposure'].get('Technology', 0):.1f}%",
         ]
         if news_data and news_data.get("headlines"):
-            top = news_data["headlines"][0]
-            lines.append(
-                f"Latest news ({news_data.get('sentiment_label', 'Neutral')}): {top.get('title', '')}"
-            )
+            lines.append(format_news_for_context(news_data))
         if verdict.warnings:
             lines.append("Warnings: " + "; ".join(verdict.warnings))
         if verdict.blocks:
@@ -208,7 +216,13 @@ class TradeGuardOrchestrator:
         )
 
     async def _general_response(
-        self, sid: str, message: str, snapshot: dict, rag_chunks, rag_tools_used: list[str]
+        self,
+        sid: str,
+        message: str,
+        snapshot: dict,
+        rag_chunks,
+        rag_tools_used: list[str],
+        web_data: dict,
     ) -> dict:
         context = (
             f"Portfolio risk: {snapshot['risk_label']} ({snapshot['risk_score']}/100)\n"
@@ -216,6 +230,9 @@ class TradeGuardOrchestrator:
             f"Tech exposure: {snapshot['sector_exposure'].get('Technology', 0):.1f}%\n"
             f"Alerts: {[a['detail'] for a in snapshot.get('alerts', [])]}"
         )
+        web_context = format_news_for_context(web_data)
+        if web_context:
+            context += f"\n{web_context}"
         if rag_chunks:
             context += f"\n{format_chunks_for_context(rag_chunks)}"
 
@@ -258,7 +275,7 @@ class TradeGuardOrchestrator:
 
         warnings = [a["detail"] for a in snapshot.get("alerts", [])]
 
-        return {
+        result = {
             "session_id": sid,
             "reply": reply,
             "decision": "Analyze",
@@ -267,7 +284,15 @@ class TradeGuardOrchestrator:
             "suggested_actions": ["Show Risk", "View Holdings"],
             "rag_sources": [c.to_dict() for c in rag_chunks],
             "rag_tools": rag_tools_used,
+            "web_sources": web_data.get("headlines", [])[:5],
         }
+        if web_data.get("headlines"):
+            result["news"] = {
+                "sentiment_label": web_data.get("sentiment_label"),
+                "headlines": web_data.get("headlines", [])[:5],
+                "live_search": web_data.get("live_search", False),
+            }
+        return result
 
     def _format_analysis(
         self, ticker, features, scores, verdict, snapshot, rag_chunks, trade_preview=None, news_data=None
@@ -307,13 +332,7 @@ class TradeGuardOrchestrator:
             lines.extend(["", "**Blocks**", *[f"- {b}" for b in verdict.blocks]])
 
         if news_data and news_data.get("headlines"):
-            lines.extend(
-                [
-                    "",
-                    f"**News ({news_data.get('sentiment_label', 'Neutral')})**",
-                    *[f"- {h['title']}" for h in news_data["headlines"][:3]],
-                ]
-            )
+            lines.extend(["", format_news_for_context(news_data)])
 
         lines.extend(
             [

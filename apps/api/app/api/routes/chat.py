@@ -24,6 +24,7 @@ class ChatResponse(BaseModel):
     trade_preview: dict | None = None
     rag_sources: list[dict] = []
     rag_tools: list[str] = []
+    web_sources: list[dict] = []
 
 
 @router.post("", response_model=ChatResponse)

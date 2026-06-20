@@ -91,3 +91,7 @@ class TavilyNewsProvider(NewsProvider):
             "earnings macro volatility"
         )
         return await self._search(query, limit=limit)
+
+    async def search_query(self, query: str, limit: int = 8) -> list[NewsHeadline]:
+        """Run a custom Tavily news search (used by chat agent)."""
+        return await self._search(query, limit=limit)

@@ -21,7 +21,8 @@ Rules you MUST follow:
 - Phase 1 is analysis-only — no live trades are executed.
 - Be concise, use markdown headers and bullet points.
 - Do not give generic financial advice; ground your reply in the provided context.
-- Never recommend options unless explicitly allowed in the context."""
+- Never recommend options unless explicitly allowed in the context.
+- When live web search results are provided, cite recent headlines where relevant."""
 
 
 def _cursor_workspace() -> str:
