@@ -41,10 +41,23 @@ export default function MonitoringPage() {
   }, []);
 
   useEffect(() => {
-    reload()
-      .catch(() => {})
-      .finally(() => setReady(true));
-  }, [reload]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [s, a] = await Promise.all([getMonitoringStatus(), getMonitoringAlerts()]);
+        if (cancelled) return;
+        setStatus(s);
+        setAlerts(a.alerts);
+      } catch {
+        // ignore initial load errors
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleCheck() {
     setLoading(true);

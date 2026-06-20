@@ -59,8 +59,23 @@ export default function ApprovalsPage() {
   }, [selectedId]);
 
   useEffect(() => {
-    loadApprovals();
-  }, [loadApprovals]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await getExecutionApprovals("pending");
+        if (cancelled) return;
+        setApprovals(data.approvals);
+        if (data.approvals.length > 0) {
+          setSelectedId((current) => current ?? data.approvals[0].id);
+        }
+      } catch {
+        if (!cancelled) setError("Could not load approval queue");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handlePreview() {
     setLoading(true);

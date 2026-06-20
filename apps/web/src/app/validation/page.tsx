@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import {
   getValidationReport,
@@ -18,15 +18,23 @@ export default function ValidationPage() {
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
 
-  const reload = useCallback(async () => {
-    setReport(await getValidationReport());
-  }, []);
-
   useEffect(() => {
-    reload()
-      .catch(() => {})
-      .finally(() => setReady(true));
-  }, [reload]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const next = await getValidationReport();
+        if (cancelled) return;
+        setReport(next);
+      } catch {
+        // ignore initial load errors
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSeed() {
     setLoading(true);

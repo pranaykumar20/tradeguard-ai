@@ -21,8 +21,8 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
         working-directory: .
-      - run: npm run lint --workspace=apps/web
-      - run: npm run build --workspace=apps/web
+      - run: npm run lint
+      - run: npm run build
 
   api:
     runs-on: ubuntu-latest

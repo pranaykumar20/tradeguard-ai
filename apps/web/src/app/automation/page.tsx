@@ -33,10 +33,23 @@ export default function AutomationPage() {
   }, []);
 
   useEffect(() => {
-    reload()
-      .catch(() => {})
-      .finally(() => setReady(true));
-  }, [reload]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [s, a] = await Promise.all([getAutomationStatus(), getAutomationAudit()]);
+        if (cancelled) return;
+        setStatus(s);
+        setAudit(a.audit);
+      } catch {
+        // ignore initial load errors
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleEnable() {
     setLoading(true);

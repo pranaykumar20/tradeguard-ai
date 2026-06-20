@@ -35,10 +35,23 @@ export default function StrategiesPage() {
   }, []);
 
   useEffect(() => {
-    reload()
-      .catch(() => {})
-      .finally(() => setReady(true));
-  }, [reload]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [s, p] = await Promise.all([getStrategies(), getStrategyProposals()]);
+        if (cancelled) return;
+        setStrategies(s.strategies);
+        setProposals(p.proposals);
+      } catch {
+        // ignore initial load errors
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function toggleEnabled(strategy: TradeStrategy) {
     setLoading(true);
