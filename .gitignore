@@ -51,6 +51,7 @@ docker-data/
 apps/api/models/artifacts/
 apps/api/data/raw/
 apps/api/data/processed/
+apps/api/.data/
 *.pkl
 *.joblib
 

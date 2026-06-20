@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getRiskSnapshot, type RiskSnapshot } from "@/lib/api";
+import { compareTickers, getRiskSnapshot, type RiskSnapshot } from "@/lib/api";
+import { Card, StatCard, StockTile } from "@/components/ui/Card";
 
 const DEMO: RiskSnapshot = {
   risk_score: 48,
@@ -22,99 +23,70 @@ const DEMO: RiskSnapshot = {
   alerts: [],
 };
 
-const COLORS = ["#22c55e", "#3b82f6", "#a855f7", "#f59e0b", "#64748b"];
+function riskTone(score: number, label: string) {
+  if (score >= 65 || label.toLowerCase().includes("elevated")) return "orange" as const;
+  if (score < 40) return "green" as const;
+  return "orange" as const;
+}
 
 export function RiskSnapshotPanel() {
   const [data, setData] = useState<RiskSnapshot>(DEMO);
+  const [watchlist, setWatchlist] = useState<
+    { ticker: string; composite_score: number; setup_label: string; risk_verdict: string }[]
+  >([]);
 
   useEffect(() => {
     getRiskSnapshot()
       .then(setData)
       .catch(() => setData(DEMO));
+    compareTickers(["NVDA", "TSLA", "META", "MSFT", "QQQ", "GBTC"])
+      .then((r) => setWatchlist(r.tickers))
+      .catch(() => {});
   }, []);
 
-  const sectors = Object.entries(data.sector_exposure);
-  const scoreColor =
-    data.risk_score >= 65 ? "text-danger" : data.risk_score >= 45 ? "text-warning" : "text-accent";
-
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-card-border bg-card p-5">
-        <h2 className="text-sm font-semibold text-muted">Risk Snapshot</h2>
-        <div className="mt-4 flex items-center gap-4">
-          <div
-            className={`flex h-24 w-24 flex-col items-center justify-center rounded-full border-4 ${
-              data.risk_score >= 65
-                ? "border-danger/50"
-                : data.risk_score >= 45
-                  ? "border-warning/50"
-                  : "border-accent/50"
-            }`}
-          >
-            <span className={`text-2xl font-bold ${scoreColor}`}>{data.risk_score}</span>
-            <span className="text-[10px] text-muted">/ 100</span>
-          </div>
-          <div>
-            <div className={`text-xl font-semibold ${scoreColor}`}>{data.risk_label} Risk</div>
-            <div className="mt-2 space-y-1 text-xs text-muted">
-              <div>Portfolio Beta: {data.beta}</div>
-              <div>Max Drawdown Est.: {data.max_drawdown_est}%</div>
-              <div>Diversification: {data.diversification}</div>
-              <div>Cash: {data.cash_pct}%</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-card-border bg-card p-5">
-        <h2 className="text-sm font-semibold text-muted">Position Exposure</h2>
-        <div className="mt-4 flex items-center gap-4">
-          <div
-            className="relative h-28 w-28 shrink-0 rounded-full"
-            style={{
-              background: `conic-gradient(${sectors
-                .map(([name, pct], i) => {
-                  const start = sectors
-                    .slice(0, i)
-                    .reduce((acc, [, p]) => acc + p, 0);
-                  return `${COLORS[i % COLORS.length]} ${start}% ${start + pct}%`;
-                })
-                .join(", ")})`,
-            }}
-          >
-            <div className="absolute inset-3 flex items-center justify-center rounded-full bg-card text-xs font-medium">
-              Sectors
-            </div>
-          </div>
-          <ul className="flex-1 space-y-1.5 text-xs">
-            {sectors.map(([name, pct], i) => (
-              <li key={name} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2">
-                  <span
-                    className="inline-block h-2 w-2 rounded-full"
-                    style={{ background: COLORS[i % COLORS.length] }}
-                  />
-                  {name}
-                </span>
-                <span className="text-muted">{pct.toFixed(0)}%</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+    <div className="space-y-[18px]">
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Account Value" value={`$${data.portfolio_value.toLocaleString()}`} />
+        <StatCard
+          label="Today P/L"
+          value={`${data.daily_pnl >= 0 ? "+" : ""}$${data.daily_pnl.toLocaleString()}`}
+          tone={data.daily_pnl >= 0 ? "green" : "red"}
+        />
+        <StatCard label="Cash" value={`${data.cash_pct}%`} />
+        <StatCard
+          label="Risk Level"
+          value={data.risk_label.toUpperCase()}
+          tone={riskTone(data.risk_score, data.risk_label)}
+        />
       </div>
 
       {data.alerts.length > 0 && (
-        <div className="rounded-2xl border border-warning/30 bg-warning/5 p-4">
-          <h3 className="text-sm font-semibold text-warning">Alerts</h3>
-          <ul className="mt-2 space-y-2 text-xs">
+        <Card warning>
+          <div className="tg-label">Risk Alerts</div>
+          <ul className="mt-3 space-y-2 text-sm">
             {data.alerts.map((a, i) => (
               <li key={i}>
-                <span className="font-medium">{a.title}:</span> {a.detail}
+                {i + 1}. {a.detail}
               </li>
             ))}
           </ul>
-        </div>
+        </Card>
       )}
+
+      <Card>
+        <div className="tg-label">Top Watchlist</div>
+        <div className="mt-4 grid gap-3.5">
+          {watchlist.map((s) => (
+            <StockTile
+              key={s.ticker}
+              ticker={s.ticker}
+              subtitle={s.setup_label}
+              score={Math.round(s.composite_score)}
+            />
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }

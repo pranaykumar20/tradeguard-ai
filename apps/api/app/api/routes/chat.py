@@ -21,6 +21,7 @@ class ChatResponse(BaseModel):
     risk_verdict: str
     warnings: list[str] = []
     suggested_actions: list[str] = []
+    trade_preview: dict | None = None
 
 
 @router.post("", response_model=ChatResponse)

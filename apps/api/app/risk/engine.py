@@ -1,11 +1,15 @@
 """Risk engine — veto power over all trade decisions."""
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
+from app.ml.scoring import score_ticker
 from app.portfolio.demo import demo_portfolio
 from app.risk.rules import RiskRules, default_rules
+from app.services.features import compute_ticker_features
 
-TECH_TICKERS = {"NVDA", "MSFT", "META", "AAPL", "GOOGL", "AMZN", "QQQ", "SMH", "GBTC"}
+TECH_TICKERS = {"NVDA", "MSFT", "META", "AAPL", "GOOGL", "AMZN", "QQQ", "SMH", "GBTC", "TSLA"}
 
 
 @dataclass
@@ -15,23 +19,47 @@ class RiskVerdict:
     blocks: list[str]
 
 
+def _in_no_trade_window(minutes: int) -> bool:
+    if minutes <= 0:
+        return False
+    now = datetime.now(ZoneInfo("America/New_York"))
+    if now.weekday() >= 5:
+        return False
+    market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    window_end = market_open + timedelta(minutes=minutes)
+    return market_open <= now < window_end
+
+
 class RiskEngine:
     def __init__(self, rules: RiskRules | None = None):
         self.rules = rules or default_rules()
+
+    def _daily_loss_blocks(self, portfolio: dict) -> list[str]:
+        blocks: list[str] = []
+        daily_pnl = float(portfolio.get("daily_pnl", 0))
+        if daily_pnl <= -self.rules.max_daily_loss_usd:
+            blocks.append(
+                f"Daily loss ${abs(daily_pnl):.2f} hit the "
+                f"${self.rules.max_daily_loss_usd:.2f} circuit breaker."
+            )
+        return blocks
 
     def evaluate_ticker(
         self,
         ticker: str,
         features: dict,
         scores: dict,
+        portfolio: dict | None = None,
     ) -> RiskVerdict:
         warnings: list[str] = []
         blocks: list[str] = []
 
+        portfolio = portfolio or demo_portfolio()
+        blocks.extend(self._daily_loss_blocks(portfolio))
+
         if ticker not in self.rules.allowed_tickers:
             blocks.append(f"{ticker} is not in the allowed ticker list.")
 
-        portfolio = demo_portfolio()
         tech_pct = portfolio["sector_exposure"].get("Technology", 0)
         if ticker in TECH_TICKERS and tech_pct >= self.rules.max_tech_sector_pct:
             warnings.append(
@@ -57,6 +85,13 @@ class RiskEngine:
         if rsi > 75:
             warnings.append(f"RSI overbought at {rsi:.0f}.")
 
+        composite = float(scores.get("composite", 50))
+        if composite < 35:
+            warnings.append(f"Weak setup score ({composite:.0f}/100) — consider waiting.")
+        risk_component = float(scores.get("components", {}).get("risk", 50))
+        if risk_component < 40:
+            warnings.append(f"Elevated volatility risk score ({risk_component:.0f}/100).")
+
         if blocks:
             verdict = "BLOCK"
         elif warnings:
@@ -66,17 +101,33 @@ class RiskEngine:
 
         return RiskVerdict(verdict=verdict, warnings=warnings, blocks=blocks)
 
-    def preview_trade(
+    async def preview_trade(
         self,
         ticker: str,
         side: str,
         quantity: float,
         limit_price: float,
         order_type: str = "limit",
+        asset_type: str = "equity",
+        portfolio: dict | None = None,
     ) -> dict:
         order_value = quantity * limit_price
         warnings: list[str] = []
         blocks: list[str] = []
+
+        portfolio = portfolio or demo_portfolio()
+        blocks.extend(self._daily_loss_blocks(portfolio))
+
+        if asset_type in self.rules.blocked_asset_types:
+            blocks.append(f"{asset_type} trades are blocked by policy.")
+
+        if asset_type == "option" and not self.rules.allow_options:
+            blocks.append("Options require explicit manual approval — blocked in Phase 1.")
+
+        if _in_no_trade_window(self.rules.no_trade_first_minutes):
+            blocks.append(
+                f"No trades in the first {self.rules.no_trade_first_minutes} minutes after market open."
+            )
 
         if ticker not in self.rules.allowed_tickers:
             blocks.append(f"{ticker} not in allowed list.")
@@ -89,9 +140,9 @@ class RiskEngine:
         if order_type == "market" and not self.rules.allow_market_orders:
             blocks.append("Market orders are blocked for volatile names — use limit orders.")
 
-        features = {"rsi_14": 58, "qqq_trend": "neutral", "vix_change": 2}
-        scores = {"composite": 65, "label": "Watch", "components": {}}
-        ticker_verdict = self.evaluate_ticker(ticker, features, scores)
+        features = await compute_ticker_features(ticker)
+        scores = score_ticker(features, ticker)
+        ticker_verdict = self.evaluate_ticker(ticker, features, scores, portfolio=portfolio)
         warnings.extend(ticker_verdict.warnings)
         blocks.extend(ticker_verdict.blocks)
 
@@ -105,12 +156,31 @@ class RiskEngine:
             "warnings": warnings,
             "blocks": blocks,
             "requires_approval": self.rules.require_manual_approval,
+            "ticker": ticker,
+            "side": side,
+            "quantity": quantity,
+            "limit_price": limit_price,
+            "setup_label": scores["label"],
+            "composite_score": scores["composite"],
         }
 
     async def portfolio_snapshot(self) -> dict:
         portfolio = demo_portfolio()
         tech_pct = portfolio["sector_exposure"].get("Technology", 0)
         alerts = []
+
+        daily_pnl = float(portfolio.get("daily_pnl", 0))
+        if daily_pnl <= -self.rules.max_daily_loss_usd:
+            alerts.append(
+                {
+                    "severity": "high",
+                    "title": "Daily Loss Limit",
+                    "detail": (
+                        f"Daily P&L ${daily_pnl:.2f} breached "
+                        f"-${self.rules.max_daily_loss_usd:.2f} limit — new trades blocked."
+                    ),
+                }
+            )
 
         if tech_pct > self.rules.max_tech_sector_pct:
             alerts.append(

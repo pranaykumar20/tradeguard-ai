@@ -1,7 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { sendChat, type ChatResponse } from "@/lib/api";
+import { Btn, Card } from "@/components/ui/Card";
 
 type Message = {
   role: "user" | "assistant";
@@ -12,13 +14,21 @@ type Message = {
 
 const STARTER = "Should I buy more NVDA today?";
 
+const ACTION_ROUTES: Record<string, string> = {
+  "Show Risk": "/dashboard",
+  "View Holdings": "/portfolio",
+  "Trade Plan": "/dashboard",
+  "Preview Trade": "/dashboard",
+};
+
 function verdictColor(v: string) {
-  if (v === "BLOCK") return "text-danger border-danger/40 bg-danger/10";
-  if (v === "CAUTION") return "text-warning border-warning/40 bg-warning/10";
-  return "text-accent border-accent/40 bg-accent/10";
+  if (v === "BLOCK") return "text-red";
+  if (v === "CAUTION") return "text-orange";
+  return "text-green";
 }
 
 export function ChatPanel() {
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,6 +38,19 @@ export function ChatPanel() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  function handleAction(action: string) {
+    if (ACTION_ROUTES[action]) {
+      router.push(ACTION_ROUTES[action]);
+      return;
+    }
+    if (action.startsWith("Analyze ")) {
+      const ticker = action.replace("Analyze ", "").trim();
+      router.push(`/analysis?ticker=${ticker}`);
+      return;
+    }
+    submit(action);
+  }
 
   async function submit(text: string) {
     const trimmed = text.trim();
@@ -66,77 +89,61 @@ export function ChatPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-card-border bg-card">
-      <header className="flex items-center justify-between border-b border-card-border px-5 py-4">
-        <div>
-          <h1 className="text-lg font-semibold">Ask AI</h1>
-          <p className="text-sm text-muted">Your AI investing assistant — analysis only in Phase 1</p>
-        </div>
-        <div className="rounded-lg border border-card-border bg-background px-3 py-1.5 text-xs text-muted">
-          Model: TG-Alpha
-        </div>
-      </header>
-
-      <div className="tg-scroll flex-1 space-y-4 overflow-y-auto p-5">
+    <Card className="flex h-full min-h-[390px] flex-col gap-3.5">
+      <div className="tg-scroll flex flex-1 flex-col gap-3.5 overflow-y-auto">
         {messages.length === 0 && (
-          <div className="rounded-xl border border-dashed border-card-border p-6 text-center text-sm text-muted">
-            Try: &ldquo;{STARTER}&rdquo;
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={() => submit(STARTER)}
-                className="rounded-lg bg-accent/15 px-4 py-2 text-accent hover:bg-accent/25"
-              >
-                Run example
-              </button>
+          <div className="space-y-3.5">
+            <div className="tg-bubble-user">Should I buy more NVDA today?</div>
+            <div className="tg-bubble-ai">
+              Ask TradeGuard about any allowed ticker. Phase 1 is analysis-only — no live trades.
             </div>
+            <Btn variant="secondary" onClick={() => submit(STARTER)}>
+              Run example
+            </Btn>
           </div>
         )}
 
         {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div
-              className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                msg.role === "user"
-                  ? "bg-accent/20 text-foreground"
-                  : "border border-card-border bg-background"
-              }`}
-            >
+          <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
+            <div className={msg.role === "user" ? "tg-bubble-user" : "tg-bubble-ai"}>
               {msg.meta && (
-                <div
-                  className={`mb-2 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${verdictColor(msg.meta.risk_verdict)}`}
-                >
-                  {msg.meta.risk_verdict}
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className={`text-xs font-bold ${verdictColor(msg.meta.risk_verdict)}`}>
+                    {msg.meta.risk_verdict}
+                  </span>
+                  {msg.meta.decision && (
+                    <span className="text-xs text-muted">· {msg.meta.decision}</span>
+                  )}
                 </div>
               )}
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
-              {msg.meta?.suggested_actions?.length ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {msg.meta.suggested_actions.map((action) => (
-                    <button
-                      key={action}
-                      type="button"
-                      onClick={() => submit(action)}
-                      className="rounded-lg border border-card-border bg-card px-3 py-1.5 text-xs hover:border-accent/50"
-                    >
-                      {action}
-                    </button>
+              {msg.meta?.warnings && msg.meta.warnings.length > 0 && (
+                <ul className="mb-2 space-y-1 text-xs text-orange">
+                  {msg.meta.warnings.map((w) => (
+                    <li key={w}>⚠ {w}</li>
                   ))}
-                </div>
-              ) : null}
-              <div className="mt-2 text-[10px] text-muted">{msg.time}</div>
+                </ul>
+              )}
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
             </div>
+            {msg.meta?.suggested_actions?.length ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {msg.meta.suggested_actions.map((action) => (
+                  <Btn key={action} variant="secondary" className="!px-3 !py-2 !text-xs" onClick={() => handleAction(action)}>
+                    {action}
+                  </Btn>
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-1 text-[10px] text-muted">{msg.time}</div>
           </div>
         ))}
 
-        {loading && (
-          <div className="text-sm text-muted">TradeGuard is analyzing risk…</div>
-        )}
+        {loading && <div className="text-sm text-muted">TradeGuard is analyzing risk…</div>}
         <div ref={bottomRef} />
       </div>
 
       <form
-        className="flex gap-2 border-t border-card-border p-4"
+        className="flex gap-2.5"
         onSubmit={(e) => {
           e.preventDefault();
           submit(input);
@@ -145,17 +152,13 @@ export function ChatPanel() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about NVDA, portfolio risk, or trade ideas…"
-          className="flex-1 rounded-xl border border-card-border bg-background px-4 py-3 text-sm outline-none focus:border-accent/50"
+          placeholder="Ask TradeGuard AI..."
+          className="tg-input"
         />
-        <button
-          type="submit"
-          disabled={loading}
-          className="rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-black disabled:opacity-50"
-        >
+        <Btn type="submit" disabled={loading}>
           Send
-        </button>
+        </Btn>
       </form>
-    </div>
+    </Card>
   );
 }

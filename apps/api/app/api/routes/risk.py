@@ -16,6 +16,7 @@ class TradePreviewRequest(BaseModel):
     quantity: float = Field(gt=0)
     limit_price: float = Field(gt=0)
     order_type: str = "limit"
+    asset_type: str = "equity"
 
 
 class TradePreviewResponse(BaseModel):
@@ -25,6 +26,12 @@ class TradePreviewResponse(BaseModel):
     warnings: list[str]
     blocks: list[str]
     requires_approval: bool
+    ticker: str | None = None
+    side: str | None = None
+    quantity: float | None = None
+    limit_price: float | None = None
+    setup_label: str | None = None
+    composite_score: float | None = None
 
 
 class RiskRulesResponse(BaseModel):
@@ -38,12 +45,13 @@ async def get_rules():
 
 @router.post("/preview", response_model=TradePreviewResponse)
 async def preview_trade(request: TradePreviewRequest):
-    result = risk_engine.preview_trade(
+    result = await risk_engine.preview_trade(
         ticker=request.ticker.upper(),
         side=request.side,
         quantity=request.quantity,
         limit_price=request.limit_price,
         order_type=request.order_type,
+        asset_type=request.asset_type,
     )
     return TradePreviewResponse(**result)
 

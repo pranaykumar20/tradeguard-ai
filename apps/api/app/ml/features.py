@@ -1,4 +1,4 @@
-"""Feature engineering for ML scoring (v1: deterministic demo features)."""
+"""Legacy sync feature shim — prefer app.services.features.compute_ticker_features."""
 
 import hashlib
 
@@ -10,12 +10,9 @@ def _seeded_float(ticker: str, salt: str, lo: float, hi: float) -> float:
 
 
 def compute_ticker_features(ticker: str) -> dict[str, float | str]:
-    """Compute feature vector for a ticker.
-
-    Phase 1 uses seeded demo values. Phase 2 replaces with live market data
-    (Polygon/Alpaca) and ta-lib indicators.
-    """
+    """Sync fallback for tests — production uses async service layer."""
     return {
+        "last_price": round(_seeded_float(ticker, "price", 80, 520), 2),
         "price_vs_20dma": round(_seeded_float(ticker, "20dma", -5, 8), 2),
         "price_vs_50dma": round(_seeded_float(ticker, "50dma", -8, 12), 2),
         "rsi_14": round(_seeded_float(ticker, "rsi", 28, 78), 1),
@@ -27,4 +24,5 @@ def compute_ticker_features(ticker: str) -> dict[str, float | str]:
         "vix_change": round(_seeded_float(ticker, "vix", -3, 8), 1),
         "sector_strength": round(_seeded_float(ticker, "sector", 40, 90), 0),
         "ml_bullish_prob": round(_seeded_float(ticker, "ml", 0.35, 0.72), 2),
+        "data_provider": "mock-sync",
     }

@@ -3,9 +3,9 @@
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from app.ml.features import compute_ticker_features
 from app.ml.scoring import score_ticker
 from app.risk.engine import RiskEngine
+from app.services.features import compute_ticker_features
 
 router = APIRouter()
 risk_engine = RiskEngine()
@@ -24,8 +24,8 @@ class TickerAnalysis(BaseModel):
 @router.get("/ticker/{ticker}", response_model=TickerAnalysis)
 async def analyze_ticker(ticker: str):
     ticker = ticker.upper()
-    features = compute_ticker_features(ticker)
-    scores = score_ticker(features)
+    features = await compute_ticker_features(ticker)
+    scores = score_ticker(features, ticker)
     verdict = risk_engine.evaluate_ticker(ticker, features, scores)
     return TickerAnalysis(
         ticker=ticker,
@@ -43,8 +43,8 @@ async def compare_tickers(tickers: str = Query(..., description="Comma-separated
     symbols = [t.strip().upper() for t in tickers.split(",") if t.strip()]
     results = []
     for symbol in symbols[:6]:
-        features = compute_ticker_features(symbol)
-        scores = score_ticker(features)
+        features = await compute_ticker_features(symbol)
+        scores = score_ticker(features, symbol)
         verdict = risk_engine.evaluate_ticker(symbol, features, scores)
         results.append(
             {
