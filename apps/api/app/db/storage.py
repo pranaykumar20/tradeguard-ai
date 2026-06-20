@@ -13,7 +13,9 @@ import structlog
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.auth import DEFAULT_USER_ID
 from app.core.config import settings
+from app.core.user_context import get_current_user_id
 from app.db.models import (
     AlertEvent,
     AppState,
@@ -27,9 +29,22 @@ from app.db.models import (
     RAGDocument,
     StrategyProposal,
     TradeStrategy,
+    User,
 )
 
 logger = structlog.get_logger()
+
+
+def _uid() -> str:
+    return get_current_user_id()
+
+
+def _row_user_id(row: dict) -> str:
+    return row.get("user_id", DEFAULT_USER_ID)
+
+
+def _state_key(key: str, user_id: str | None = None) -> str:
+    return f"{user_id or _uid()}:{key}"
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -164,6 +179,22 @@ class StorageBackend(ABC):
     async def list_automation_audit(self, limit: int = 50) -> list[dict]:
         pass
 
+    @abstractmethod
+    async def get_or_create_user(
+        self, clerk_id: str, email: str = "", display_name: str = ""
+    ) -> dict:
+        pass
+
+    @abstractmethod
+    async def list_users(self) -> list[dict]:
+        pass
+
+    async def list_user_ids(self) -> list[str]:
+        users = await self.list_users()
+        if users:
+            return [u["id"] for u in users]
+        return [DEFAULT_USER_ID]
+
 
 class MemoryStorageBackend(StorageBackend):
     backend_name = "memory"
@@ -171,6 +202,7 @@ class MemoryStorageBackend(StorageBackend):
     def __init__(self):
         self._path = Path(settings.memory_store_path)
         self._data: dict = {
+            "chat_sessions": {},
             "chat_messages": [],
             "paper_trades": [],
             "approval_requests": [],
@@ -181,6 +213,7 @@ class MemoryStorageBackend(StorageBackend):
             "trade_strategies": [],
             "strategy_proposals": [],
             "automation_audit": [],
+            "users": [],
         }
 
     async def init(self) -> None:
@@ -190,7 +223,14 @@ class MemoryStorageBackend(StorageBackend):
                 self._data = json.loads(self._path.read_text())
             except json.JSONDecodeError:
                 logger.warning("memory_store_corrupt", path=str(self._path))
+        self._migrate_memory_store()
         logger.info("storage_init", backend="memory", path=str(self._path))
+
+    def _migrate_memory_store(self) -> None:
+        app_state = self._data.get("app_state", {})
+        if app_state and not any(":" in str(k) for k in app_state):
+            self._data["app_state"] = {f"{DEFAULT_USER_ID}:{k}": v for k, v in app_state.items()}
+            self._persist()
 
     async def close(self) -> None:
         self._persist()
@@ -201,6 +241,17 @@ class MemoryStorageBackend(StorageBackend):
     async def save_chat_message(
         self, session_id: str, role: str, content: str, meta: dict | None = None
     ) -> None:
+        uid = _uid()
+        sessions = self._data.setdefault("chat_sessions", {})
+        session = sessions.get(session_id)
+        if session and _row_user_id(session) != uid:
+            return
+        if not session:
+            sessions[session_id] = {
+                "id": session_id,
+                "user_id": uid,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
         self._data["chat_messages"].append(
             {
                 "id": str(uuid4()),
@@ -214,12 +265,17 @@ class MemoryStorageBackend(StorageBackend):
         self._persist()
 
     async def get_chat_messages(self, session_id: str, limit: int = 50) -> list[dict]:
+        uid = _uid()
+        session = self._data.get("chat_sessions", {}).get(session_id)
+        if session and _row_user_id(session) != uid:
+            return []
         msgs = [m for m in self._data["chat_messages"] if m["session_id"] == session_id]
         return msgs[-limit:]
 
     async def create_paper_trade(self, trade: dict) -> dict:
         row = {
             "id": str(uuid4()),
+            "user_id": trade.get("user_id", _uid()),
             "created_at": datetime.now(timezone.utc).isoformat(),
             **trade,
         }
@@ -228,18 +284,21 @@ class MemoryStorageBackend(StorageBackend):
         return row
 
     async def update_paper_trade(self, trade_id: str, updates: dict) -> dict | None:
+        uid = _uid()
         for trade in self._data["paper_trades"]:
-            if trade["id"] == trade_id:
+            if trade["id"] == trade_id and _row_user_id(trade) == uid:
                 trade.update(updates)
                 self._persist()
                 return trade
         return None
 
     async def list_paper_trades(self, limit: int = 100) -> list[dict]:
-        return self._data["paper_trades"][:limit]
+        uid = _uid()
+        rows = [t for t in self._data["paper_trades"] if _row_user_id(t) == uid]
+        return rows[:limit]
 
     async def paper_trade_stats(self) -> dict:
-        trades = self._data["paper_trades"]
+        trades = await self.list_paper_trades(limit=500)
         filled = [t for t in trades if t.get("status") == "filled"]
         wins = [t for t in filled if (t.get("pnl") or 0) > 0]
         total_pnl = sum(t.get("pnl") or 0 for t in filled)
@@ -284,6 +343,7 @@ class MemoryStorageBackend(StorageBackend):
     async def create_approval_request(self, request: dict) -> dict:
         row = {
             "id": str(uuid4()),
+            "user_id": request.get("user_id", _uid()),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "resolved_at": None,
             **request,
@@ -293,38 +353,46 @@ class MemoryStorageBackend(StorageBackend):
         return row
 
     async def update_approval_request(self, request_id: str, updates: dict) -> dict | None:
+        uid = _uid()
         for req in self._data.get("approval_requests", []):
-            if req["id"] == request_id:
+            if req["id"] == request_id and _row_user_id(req) == uid:
                 req.update(updates)
                 self._persist()
                 return req
         return None
 
     async def get_approval_request(self, request_id: str) -> dict | None:
+        uid = _uid()
         return next(
-            (r for r in self._data.get("approval_requests", []) if r["id"] == request_id),
+            (
+                r
+                for r in self._data.get("approval_requests", [])
+                if r["id"] == request_id and _row_user_id(r) == uid
+            ),
             None,
         )
 
     async def list_approval_requests(
         self, status: str | None = None, limit: int = 50
     ) -> list[dict]:
-        rows = self._data.get("approval_requests", [])
+        uid = _uid()
+        rows = [r for r in self._data.get("approval_requests", []) if _row_user_id(r) == uid]
         if status:
             rows = [r for r in rows if r.get("status") == status]
         return rows[:limit]
 
     async def get_app_state(self, key: str) -> dict | None:
-        return self._data.get("app_state", {}).get(key)
+        return self._data.get("app_state", {}).get(_state_key(key))
 
     async def set_app_state(self, key: str, value: dict) -> dict:
-        self._data.setdefault("app_state", {})[key] = value
+        self._data.setdefault("app_state", {})[_state_key(key)] = value
         self._persist()
         return value
 
     async def create_alert_event(self, event: dict) -> dict:
         row = {
             "id": str(uuid4()),
+            "user_id": event.get("user_id", _uid()),
             "created_at": datetime.now(timezone.utc).isoformat(),
             **event,
         }
@@ -333,12 +401,15 @@ class MemoryStorageBackend(StorageBackend):
         return row
 
     async def list_alert_events(self, limit: int = 50) -> list[dict]:
-        return self._data.get("alert_events", [])[:limit]
+        uid = _uid()
+        rows = [e for e in self._data.get("alert_events", []) if _row_user_id(e) == uid]
+        return rows[:limit]
 
     async def create_trade_strategy(self, strategy: dict) -> dict:
         now = datetime.now(timezone.utc).isoformat()
         row = {
             "id": str(uuid4()),
+            "user_id": strategy.get("user_id", _uid()),
             "created_at": now,
             "updated_at": now,
             "auto_approve": False,
@@ -350,8 +421,9 @@ class MemoryStorageBackend(StorageBackend):
         return row
 
     async def update_trade_strategy(self, strategy_id: str, updates: dict) -> dict | None:
+        uid = _uid()
         for strategy in self._data.get("trade_strategies", []):
-            if strategy["id"] == strategy_id:
+            if strategy["id"] == strategy_id and _row_user_id(strategy) == uid:
                 strategy.update(updates)
                 strategy["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self._persist()
@@ -359,18 +431,27 @@ class MemoryStorageBackend(StorageBackend):
         return None
 
     async def get_trade_strategy(self, strategy_id: str) -> dict | None:
+        uid = _uid()
         return next(
-            (s for s in self._data.get("trade_strategies", []) if s["id"] == strategy_id),
+            (
+                s
+                for s in self._data.get("trade_strategies", [])
+                if s["id"] == strategy_id and _row_user_id(s) == uid
+            ),
             None,
         )
 
     async def list_trade_strategies(self) -> list[dict]:
-        return list(self._data.get("trade_strategies", []))
+        uid = _uid()
+        return [s for s in self._data.get("trade_strategies", []) if _row_user_id(s) == uid]
 
     async def delete_trade_strategy(self, strategy_id: str) -> bool:
+        uid = _uid()
         strategies = self._data.get("trade_strategies", [])
         before = len(strategies)
-        self._data["trade_strategies"] = [s for s in strategies if s["id"] != strategy_id]
+        self._data["trade_strategies"] = [
+            s for s in strategies if not (s["id"] == strategy_id and _row_user_id(s) == uid)
+        ]
         if len(self._data["trade_strategies"]) < before:
             self._persist()
             return True
@@ -379,6 +460,7 @@ class MemoryStorageBackend(StorageBackend):
     async def create_strategy_proposal(self, proposal: dict) -> dict:
         row = {
             "id": str(uuid4()),
+            "user_id": proposal.get("user_id", _uid()),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "resolved_at": None,
             **proposal,
@@ -390,7 +472,8 @@ class MemoryStorageBackend(StorageBackend):
     async def list_strategy_proposals(
         self, strategy_id: str | None = None, limit: int = 50
     ) -> list[dict]:
-        rows = self._data.get("strategy_proposals", [])
+        uid = _uid()
+        rows = [r for r in self._data.get("strategy_proposals", []) if _row_user_id(r) == uid]
         if strategy_id:
             rows = [r for r in rows if r.get("strategy_id") == strategy_id]
         return rows[:limit]
@@ -398,6 +481,7 @@ class MemoryStorageBackend(StorageBackend):
     async def create_automation_audit(self, entry: dict) -> dict:
         row = {
             "id": str(uuid4()),
+            "user_id": entry.get("user_id", _uid()),
             "created_at": datetime.now(timezone.utc).isoformat(),
             **entry,
         }
@@ -406,7 +490,37 @@ class MemoryStorageBackend(StorageBackend):
         return row
 
     async def list_automation_audit(self, limit: int = 50) -> list[dict]:
-        return self._data.get("automation_audit", [])[:limit]
+        uid = _uid()
+        rows = [e for e in self._data.get("automation_audit", []) if _row_user_id(e) == uid]
+        return rows[:limit]
+
+    async def list_users(self) -> list[dict]:
+        return list(self._data.get("users", []))
+
+    async def get_or_create_user(
+        self, clerk_id: str, email: str = "", display_name: str = ""
+    ) -> dict:
+        users = self._data.setdefault("users", [])
+        for user in users:
+            if user.get("clerk_id") == clerk_id:
+                if email and user.get("email") != email:
+                    user["email"] = email
+                if display_name and user.get("display_name") != display_name:
+                    user["display_name"] = display_name
+                user["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self._persist()
+                return user
+        row = {
+            "id": str(uuid4()),
+            "clerk_id": clerk_id,
+            "email": email,
+            "display_name": display_name or email.split("@")[0] if email else "",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        users.append(row)
+        self._persist()
+        return row
 
 
 class PostgresStorageBackend(StorageBackend):
@@ -431,17 +545,24 @@ class PostgresStorageBackend(StorageBackend):
     async def save_chat_message(
         self, session_id: str, role: str, content: str, meta: dict | None = None
     ) -> None:
+        uid = _uid()
         async with self._session() as session:
             exists = await session.get(ChatSession, session_id)
+            if exists and exists.user_id != uid:
+                return
             if not exists:
-                session.add(ChatSession(id=session_id))
+                session.add(ChatSession(id=session_id, user_id=uid))
             session.add(
                 ChatMessage(session_id=session_id, role=role, content=content, meta=meta)
             )
             await session.commit()
 
     async def get_chat_messages(self, session_id: str, limit: int = 50) -> list[dict]:
+        uid = _uid()
         async with self._session() as session:
+            chat_session = await session.get(ChatSession, session_id)
+            if chat_session and chat_session.user_id != uid:
+                return []
             result = await session.execute(
                 select(ChatMessage)
                 .where(ChatMessage.session_id == session_id)
@@ -464,6 +585,7 @@ class PostgresStorageBackend(StorageBackend):
     async def create_paper_trade(self, trade: dict) -> dict:
         async with self._session() as session:
             payload = dict(trade)
+            payload.setdefault("user_id", _uid())
             if isinstance(payload.get("created_at"), str):
                 payload["created_at"] = datetime.fromisoformat(
                     payload["created_at"].replace("Z", "+00:00")
@@ -489,7 +611,7 @@ class PostgresStorageBackend(StorageBackend):
     async def update_paper_trade(self, trade_id: str, updates: dict) -> dict | None:
         async with self._session() as session:
             row = await session.get(PaperTrade, trade_id)
-            if not row:
+            if not row or row.user_id != _uid():
                 return None
             for key, val in updates.items():
                 setattr(row, key, val)
@@ -512,7 +634,10 @@ class PostgresStorageBackend(StorageBackend):
     async def list_paper_trades(self, limit: int = 100) -> list[dict]:
         async with self._session() as session:
             result = await session.execute(
-                select(PaperTrade).order_by(PaperTrade.created_at.desc()).limit(limit)
+                select(PaperTrade)
+                .where(PaperTrade.user_id == _uid())
+                .order_by(PaperTrade.created_at.desc())
+                .limit(limit)
             )
             return [
                 {
@@ -612,7 +737,9 @@ class PostgresStorageBackend(StorageBackend):
 
     async def create_approval_request(self, request: dict) -> dict:
         async with self._session() as session:
-            row = ApprovalRequest(**request)
+            payload = dict(request)
+            payload.setdefault("user_id", _uid())
+            row = ApprovalRequest(**payload)
             session.add(row)
             await session.commit()
             await session.refresh(row)
@@ -621,7 +748,7 @@ class PostgresStorageBackend(StorageBackend):
     async def update_approval_request(self, request_id: str, updates: dict) -> dict | None:
         async with self._session() as session:
             row = await session.get(ApprovalRequest, request_id)
-            if not row:
+            if not row or row.user_id != _uid():
                 return None
             for key, val in updates.items():
                 setattr(row, key, val)
@@ -632,13 +759,20 @@ class PostgresStorageBackend(StorageBackend):
     async def get_approval_request(self, request_id: str) -> dict | None:
         async with self._session() as session:
             row = await session.get(ApprovalRequest, request_id)
-            return self._approval_to_dict(row) if row else None
+            if not row or row.user_id != _uid():
+                return None
+            return self._approval_to_dict(row)
 
     async def list_approval_requests(
         self, status: str | None = None, limit: int = 50
     ) -> list[dict]:
         async with self._session() as session:
-            query = select(ApprovalRequest).order_by(ApprovalRequest.created_at.desc()).limit(limit)
+            query = (
+                select(ApprovalRequest)
+                .where(ApprovalRequest.user_id == _uid())
+                .order_by(ApprovalRequest.created_at.desc())
+                .limit(limit)
+            )
             if status:
                 query = query.where(ApprovalRequest.status == status)
             result = await session.execute(query)
@@ -646,22 +780,25 @@ class PostgresStorageBackend(StorageBackend):
 
     async def get_app_state(self, key: str) -> dict | None:
         async with self._session() as session:
-            row = await session.get(AppState, key)
+            row = await session.get(AppState, (_uid(), key))
             return dict(row.value) if row and row.value else None
 
     async def set_app_state(self, key: str, value: dict) -> dict:
         async with self._session() as session:
-            row = await session.get(AppState, key)
+            state_id = (_uid(), key)
+            row = await session.get(AppState, state_id)
             if row:
                 row.value = value
             else:
-                session.add(AppState(key=key, value=value))
+                session.add(AppState(user_id=_uid(), key=key, value=value))
             await session.commit()
             return value
 
     async def create_alert_event(self, event: dict) -> dict:
         async with self._session() as session:
-            row = AlertEvent(**event)
+            payload = dict(event)
+            payload.setdefault("user_id", _uid())
+            row = AlertEvent(**payload)
             session.add(row)
             await session.commit()
             await session.refresh(row)
@@ -670,13 +807,18 @@ class PostgresStorageBackend(StorageBackend):
     async def list_alert_events(self, limit: int = 50) -> list[dict]:
         async with self._session() as session:
             result = await session.execute(
-                select(AlertEvent).order_by(AlertEvent.created_at.desc()).limit(limit)
+                select(AlertEvent)
+                .where(AlertEvent.user_id == _uid())
+                .order_by(AlertEvent.created_at.desc())
+                .limit(limit)
             )
             return [self._alert_to_dict(r) for r in result.scalars().all()]
 
     async def create_trade_strategy(self, strategy: dict) -> dict:
         async with self._session() as session:
-            row = TradeStrategy(**strategy)
+            payload = dict(strategy)
+            payload.setdefault("user_id", _uid())
+            row = TradeStrategy(**payload)
             session.add(row)
             await session.commit()
             await session.refresh(row)
@@ -685,7 +827,7 @@ class PostgresStorageBackend(StorageBackend):
     async def update_trade_strategy(self, strategy_id: str, updates: dict) -> dict | None:
         async with self._session() as session:
             row = await session.get(TradeStrategy, strategy_id)
-            if not row:
+            if not row or row.user_id != _uid():
                 return None
             for key, val in updates.items():
                 setattr(row, key, val)
@@ -696,19 +838,23 @@ class PostgresStorageBackend(StorageBackend):
     async def get_trade_strategy(self, strategy_id: str) -> dict | None:
         async with self._session() as session:
             row = await session.get(TradeStrategy, strategy_id)
-            return self._strategy_to_dict(row) if row else None
+            if not row or row.user_id != _uid():
+                return None
+            return self._strategy_to_dict(row)
 
     async def list_trade_strategies(self) -> list[dict]:
         async with self._session() as session:
             result = await session.execute(
-                select(TradeStrategy).order_by(TradeStrategy.created_at.asc())
+                select(TradeStrategy)
+                .where(TradeStrategy.user_id == _uid())
+                .order_by(TradeStrategy.created_at.asc())
             )
             return [self._strategy_to_dict(r) for r in result.scalars().all()]
 
     async def delete_trade_strategy(self, strategy_id: str) -> bool:
         async with self._session() as session:
             row = await session.get(TradeStrategy, strategy_id)
-            if not row:
+            if not row or row.user_id != _uid():
                 return False
             await session.delete(row)
             await session.commit()
@@ -716,7 +862,9 @@ class PostgresStorageBackend(StorageBackend):
 
     async def create_strategy_proposal(self, proposal: dict) -> dict:
         async with self._session() as session:
-            row = StrategyProposal(**proposal)
+            payload = dict(proposal)
+            payload.setdefault("user_id", _uid())
+            row = StrategyProposal(**payload)
             session.add(row)
             await session.commit()
             await session.refresh(row)
@@ -728,6 +876,7 @@ class PostgresStorageBackend(StorageBackend):
         async with self._session() as session:
             query = (
                 select(StrategyProposal)
+                .where(StrategyProposal.user_id == _uid())
                 .order_by(StrategyProposal.created_at.desc())
                 .limit(limit)
             )
@@ -738,7 +887,9 @@ class PostgresStorageBackend(StorageBackend):
 
     async def create_automation_audit(self, entry: dict) -> dict:
         async with self._session() as session:
-            row = AutomationAuditLog(**entry)
+            payload = dict(entry)
+            payload.setdefault("user_id", _uid())
+            row = AutomationAuditLog(**payload)
             session.add(row)
             await session.commit()
             await session.refresh(row)
@@ -748,10 +899,50 @@ class PostgresStorageBackend(StorageBackend):
         async with self._session() as session:
             result = await session.execute(
                 select(AutomationAuditLog)
+                .where(AutomationAuditLog.user_id == _uid())
                 .order_by(AutomationAuditLog.created_at.desc())
                 .limit(limit)
             )
             return [self._automation_audit_to_dict(r) for r in result.scalars().all()]
+
+    async def list_users(self) -> list[dict]:
+        async with self._session() as session:
+            result = await session.execute(select(User).order_by(User.created_at.asc()))
+            return [self._user_to_dict(r) for r in result.scalars().all()]
+
+    async def get_or_create_user(
+        self, clerk_id: str, email: str = "", display_name: str = ""
+    ) -> dict:
+        async with self._session() as session:
+            result = await session.execute(select(User).where(User.clerk_id == clerk_id))
+            row = result.scalar_one_or_none()
+            if row:
+                if email and row.email != email:
+                    row.email = email
+                if display_name and row.display_name != display_name:
+                    row.display_name = display_name
+                await session.commit()
+                return self._user_to_dict(row)
+            row = User(
+                clerk_id=clerk_id,
+                email=email,
+                display_name=display_name or (email.split("@")[0] if email else ""),
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._user_to_dict(row)
+
+    @staticmethod
+    def _user_to_dict(row: User) -> dict:
+        return {
+            "id": row.id,
+            "clerk_id": row.clerk_id,
+            "email": row.email,
+            "display_name": row.display_name,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
 
     @staticmethod
     def _automation_audit_to_dict(row: AutomationAuditLog) -> dict:

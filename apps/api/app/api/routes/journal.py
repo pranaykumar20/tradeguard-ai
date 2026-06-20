@@ -1,8 +1,9 @@
 """Paper trade journal API."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.auth import CurrentUser, get_optional_user
 from app.services.journal import JournalService
 
 router = APIRouter()
@@ -22,13 +23,14 @@ class FillTradeRequest(BaseModel):
 
 
 @router.get("")
-async def list_trades(limit: int = 100):
-    return {"trades": await journal.list_trades(limit=limit)}
+async def list_trades(limit: int = 100, user: CurrentUser = Depends(get_optional_user)):
+    return {"trades": await journal.list_trades(limit=limit), "user_id": user.id}
 
 
 @router.get("/stats")
-async def trade_stats():
-    return await journal.stats()
+async def trade_stats(user: CurrentUser = Depends(get_optional_user)):
+    stats = await journal.stats()
+    return {**stats, "user_id": user.id}
 
 
 @router.post("/plan")

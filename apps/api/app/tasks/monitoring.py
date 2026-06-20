@@ -17,6 +17,7 @@ async def run_monitoring_check_async() -> dict:
     result = await service.run_check()
     logger.info(
         "monitoring_check_complete",
+        user_id=result.get("user_id"),
         status=result.get("status"),
         trading_halted=result.get("trading_halted"),
     )

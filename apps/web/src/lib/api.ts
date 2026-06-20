@@ -1,5 +1,13 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+type TokenGetter = () => Promise<string | null>;
+let authTokenGetter: TokenGetter | null = null;
+
+/** Set by AuthShell when Clerk is configured. */
+export function setAuthTokenGetter(getter: TokenGetter | null) {
+  authTokenGetter = getter;
+}
+
 export type ChatResponse = {
   session_id: string;
   reply: string;
@@ -65,10 +73,44 @@ export type TickerAnalysis = {
   ticker: string;
   scores: Record<string, number>;
   composite_score: number;
+  composite_score_adjusted?: number;
   setup_label: string;
   features: Record<string, number | string>;
   risk_verdict: string;
   warnings: string[];
+  news?: {
+    sentiment_score: number;
+    sentiment_label: string;
+    headline_count: number;
+    headlines: { title: string; summary: string; source: string; sentiment: number; published_at: string }[];
+    provider: string;
+  };
+  filings?: {
+    ticker: string;
+    filing_count: number;
+    filings: { chunk_id: string; source: string; content: string }[];
+    rag_excerpts: { source: string; content: string; score: number }[];
+  };
+  regime?: MacroRegime;
+};
+
+export type MacroRegime = {
+  regime: string;
+  label: string;
+  enabled: boolean;
+  risk_score_adjustment: number;
+  signals: Record<string, number | string>;
+  guidance?: string;
+};
+
+export type MLModelStatus = {
+  model_exists: boolean;
+  version: number;
+  last_trained_at?: string;
+  source?: string;
+  accuracy?: number;
+  journal_trades_used?: number;
+  min_trades_required?: number;
 };
 
 export type Readiness = {
@@ -187,12 +229,19 @@ export type ExecutionPreview = {
 };
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (authTokenGetter) {
+    const token = await authTokenGetter();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   });
   if (!res.ok) {
     throw new Error(`API ${path} failed: ${res.status}`);
@@ -220,7 +269,7 @@ export async function getHealth(): Promise<{ status: string; service: string }> 
 }
 
 export async function getReadiness(): Promise<Readiness> {
-  return fetchJson<Readiness>("/api/ready");
+  return fetchJson<Readiness>("/api/health/ready");
 }
 
 export async function getRiskRules(): Promise<{ rules: RiskRules }> {
@@ -246,9 +295,37 @@ export async function getTickerAnalysis(ticker: string): Promise<TickerAnalysis>
 }
 
 export async function compareTickers(tickers: string[]): Promise<{
-  tickers: { ticker: string; composite_score: number; setup_label: string; risk_verdict: string }[];
+  tickers: {
+    ticker: string;
+    composite_score: number;
+    composite_score_adjusted?: number;
+    setup_label: string;
+    risk_verdict: string;
+  }[];
+  regime?: MacroRegime;
 }> {
   return fetchJson(`/api/analysis/compare?tickers=${tickers.join(",")}`);
+}
+
+export async function getMacroRegime(): Promise<MacroRegime> {
+  return fetchJson<MacroRegime>("/api/intelligence/regime");
+}
+
+export async function getMLModelStatus(): Promise<MLModelStatus> {
+  return fetchJson<MLModelStatus>("/api/intelligence/ml/status");
+}
+
+export async function retrainMLModel(): Promise<{
+  status: string;
+  version?: number;
+  accuracy?: number;
+  journal_trades_used?: number;
+}> {
+  return fetchJson("/api/intelligence/ml/retrain", { method: "POST" });
+}
+
+export async function getTickerNews(ticker: string): Promise<TickerAnalysis["news"]> {
+  return fetchJson(`/api/intelligence/news/${encodeURIComponent(ticker)}`);
 }
 
 export async function getJournalTrades(limit = 100): Promise<{ trades: PaperTrade[] }> {

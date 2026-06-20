@@ -1,8 +1,9 @@
 """Guarded execution and approval queue API."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.auth import CurrentUser, get_optional_user
 from app.services.execution import ExecutionService
 
 router = APIRouter()
@@ -57,8 +58,15 @@ async def submit_order(request: OrderSubmitRequest):
 
 
 @router.get("/approvals")
-async def list_approvals(status: str | None = None, limit: int = 50):
-    return {"approvals": await execution.list_approvals(status=status, limit=limit)}
+async def list_approvals(
+    status: str | None = None,
+    limit: int = 50,
+    user: CurrentUser = Depends(get_optional_user),
+):
+    return {
+        "approvals": await execution.list_approvals(status=status, limit=limit),
+        "user_id": user.id,
+    }
 
 
 @router.get("/approvals/{request_id}")

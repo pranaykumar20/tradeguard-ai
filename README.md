@@ -54,6 +54,8 @@ See **[docs/PLAN.md](docs/PLAN.md)** for the full living roadmap with sub-phase 
 2. **Phase 2 — Paper trading**: trade plans, journal, 100-trade track record — **Done**
 3. **Phase 3 — Small Agentic account**: manual approval, stocks/ETFs only, max position rules — **Done**
 4. **Phase 4 — Automation**: monitoring, strategies, validation gate, constrained automation — **Done**
+5. **Phase 5 — Production**: API deploy, auth, email alerts, CI/CD — **In progress** (see [docs/DEPLOY.md](docs/DEPLOY.md))
+6. **Phases 6–9**: intelligence, execution expansion, observability, product UX — **Planned**
 
 ## Quick start
 

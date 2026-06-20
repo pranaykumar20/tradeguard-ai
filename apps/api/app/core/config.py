@@ -2,8 +2,17 @@
 
 import json
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _normalize_database_url(value: str) -> str:
+    """Railway/Fly often provide postgres:// — async SQLAlchemy needs asyncpg driver."""
+    if value.startswith("postgres://"):
+        return value.replace("postgres://", "postgresql+asyncpg://", 1)
+    if value.startswith("postgresql://") and "+asyncpg" not in value:
+        return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return value
 
 
 def _parse_cors_origins(value: str) -> list[str]:
@@ -25,6 +34,13 @@ class Settings(BaseSettings):
     debug: bool = True
 
     database_url: str = "postgresql+asyncpg://tradeguard:tradeguard@localhost:5433/tradeguard"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_db_url(cls, value: str) -> str:
+        if isinstance(value, str):
+            return _normalize_database_url(value)
+        return value
     redis_url: str = "redis://localhost:6380/0"
     celery_broker_url: str = "redis://localhost:6380/1"
     celery_result_backend: str = "redis://localhost:6380/2"
@@ -72,6 +88,12 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
+    alert_email_from: str = ""
+
+    # Phase 5.2 — auth (disabled when CLERK_SECRET_KEY empty)
+    auth_provider: str = "auto"  # auto | disabled | clerk
+    clerk_secret_key: str = ""
+    clerk_jwt_issuer: str = ""  # e.g. https://your-app.clerk.accounts.dev
 
     # Phase 4.2 — semi-automated strategies
     strategies_enabled: bool = True
@@ -94,6 +116,12 @@ class Settings(BaseSettings):
     # Phase 4.4 — constrained automation
     automation_feature_enabled: bool = True
     automation_max_daily_trades: int = 5
+
+    # Phase 6 — intelligence
+    news_provider: str = "auto"  # auto | mock | polygon
+    sec_filings_enabled: bool = True
+    regime_detection_enabled: bool = True
+    ml_retrain_min_trades: int = 10
 
     cors_origins_env: str = Field(
         default="http://localhost:3000,http://localhost:3001",
@@ -158,8 +186,45 @@ class Settings(BaseSettings):
         return bool(self.slack_webhook_url)
 
     @property
+    def use_email_alerts(self) -> bool:
+        if self.alert_provider == "mock":
+            return False
+        if self.alert_provider == "email":
+            return bool(self.smtp_host and self.alert_email_to)
+        return bool(self.smtp_host and self.alert_email_to)
+
+    @property
     def active_alert_provider(self) -> str:
-        return "slack" if self.use_slack_alerts else "mock"
+        channels: list[str] = []
+        if self.use_slack_alerts:
+            channels.append("slack")
+        if self.use_email_alerts:
+            channels.append("email")
+        if not channels:
+            return "mock"
+        if len(channels) == 1:
+            return channels[0]
+        return "+".join(channels)
+
+    @property
+    def auth_enabled(self) -> bool:
+        if self.auth_provider == "disabled":
+            return False
+        if self.auth_provider == "clerk":
+            return bool(self.clerk_secret_key and self.clerk_jwt_issuer)
+        return bool(self.clerk_secret_key and self.clerk_jwt_issuer)
+
+    @property
+    def use_polygon_news(self) -> bool:
+        if self.news_provider == "mock":
+            return False
+        if self.news_provider == "polygon":
+            return bool(self.polygon_api_key)
+        return bool(self.polygon_api_key)
+
+    @property
+    def active_news_provider(self) -> str:
+        return "polygon" if self.use_polygon_news else "mock"
 
 
 settings = Settings()

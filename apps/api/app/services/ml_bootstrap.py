@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import structlog
 
-from app.ml.training import ARTIFACTS_DIR, train_direction_model
+from app.ml.training import ARTIFACTS_DIR, FEATURE_COLS, train_direction_model
 from app.providers.market.factory import get_market_data_provider
 from app.providers.market.mock import MockMarketDataProvider
 
@@ -48,14 +48,7 @@ async def ensure_direction_model() -> dict | None:
         return None
 
     dataset = pd.concat(rows, ignore_index=True)
-    feature_cols = [
-        "price_vs_20dma",
-        "price_vs_50dma",
-        "rsi_14",
-        "macd_signal",
-        "atr_percent",
-        "volume_spike",
-    ]
+    feature_cols = FEATURE_COLS
     metrics = train_direction_model(dataset, feature_cols=feature_cols)
     logger.info("ml_model_bootstrapped", accuracy=metrics.get("accuracy"))
     return metrics

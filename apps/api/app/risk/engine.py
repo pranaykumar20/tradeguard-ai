@@ -50,6 +50,7 @@ class RiskEngine:
         features: dict,
         scores: dict,
         portfolio: dict | None = None,
+        regime: dict | None = None,
     ) -> RiskVerdict:
         warnings: list[str] = []
         blocks: list[str] = []
@@ -91,6 +92,21 @@ class RiskEngine:
         risk_component = float(scores.get("components", {}).get("risk", 50))
         if risk_component < 40:
             warnings.append(f"Elevated volatility risk score ({risk_component:.0f}/100).")
+
+        if regime and regime.get("enabled"):
+            regime_key = regime.get("regime", "neutral")
+            if regime_key == "high_vol":
+                warnings.append(
+                    f"High-volatility macro regime — {regime.get('guidance', 'reduce size')}"
+                )
+            elif regime_key == "risk_off":
+                warnings.append("Risk-off macro regime — favor defensive positioning.")
+            adj = regime.get("risk_score_adjustment", 0)
+            if adj < 0 and composite >= 55:
+                warnings.append(
+                    f"Macro regime adjusted setup score by {adj} pts (now "
+                    f"{max(0, composite + adj):.0f}/100 effective)."
+                )
 
         if blocks:
             verdict = "BLOCK"

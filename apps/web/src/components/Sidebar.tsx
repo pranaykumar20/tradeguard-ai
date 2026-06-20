@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AccountRiskWidget } from "@/components/AccountRiskWidget";
+import { AuthControls } from "@/components/AuthShell";
 
 const NAV: { href: string; label: string; badge?: string }[] = [
   { href: "/", label: "AI Chat" },
@@ -25,7 +26,7 @@ export function Sidebar() {
       <div className="text-2xl font-extrabold tracking-tight">
         TradeGuard <span className="text-teal">AI</span>
       </div>
-      <div className="tg-sub mt-1">Phase 4 complete · Guarded automation</div>
+      <div className="tg-sub mt-1">Phase 6 · Intelligence upgrades</div>
 
       <nav className="mt-7 flex-1 space-y-1">
         {NAV.map((item) => {
@@ -54,6 +55,7 @@ export function Sidebar() {
       </nav>
 
       <AccountRiskWidget />
+      <AuthControls />
     </aside>
   );
 }

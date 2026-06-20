@@ -82,11 +82,21 @@ function TickerPanel({ ticker }: { ticker: string }) {
       <Card warning>
         <h2 className="text-xl font-extrabold">AI Summary</h2>
         <p className="tg-sub mt-3">
-          {analysis.ticker} setup: {analysis.setup_label}. Composite score {analysis.composite_score}/100.
+          {analysis.ticker} setup: {analysis.setup_label}. Composite score {analysis.composite_score}/100
+          {analysis.composite_score_adjusted != null &&
+            analysis.composite_score_adjusted !== analysis.composite_score &&
+            ` (${analysis.composite_score_adjusted} after macro regime)`}
+          .
           {analysis.warnings.length > 0
             ? ` ${analysis.warnings[0]}`
             : " Momentum and risk factors within normal range."}
         </p>
+        {analysis.regime?.enabled && (
+          <p className="mt-2 text-sm text-muted">
+            Macro regime: <span className="font-bold text-foreground">{analysis.regime.label}</span>
+            {analysis.regime.guidance ? ` — ${analysis.regime.guidance}` : ""}
+          </p>
+        )}
         <div className="mt-4">
           <Row label="Decision" value={analysis.setup_label.toUpperCase()} tone="orange" />
           <Row label="Risk Verdict" value={analysis.risk_verdict} tone={verdictTone(analysis.risk_verdict)} />
@@ -98,6 +108,38 @@ function TickerPanel({ ticker }: { ticker: string }) {
           <Btn variant="secondary">Add Alert</Btn>
         </div>
       </Card>
+
+      {analysis.news && analysis.news.headline_count > 0 && (
+        <Card className="lg:col-span-2">
+          <h2 className="font-extrabold">
+            News — {analysis.news.sentiment_label} ({analysis.news.sentiment_score})
+          </h2>
+          <ul className="mt-4 space-y-3">
+            {analysis.news.headlines.slice(0, 5).map((h) => (
+              <li key={h.title} className="border-b border-white/[0.06] pb-3 last:border-0">
+                <p className="text-sm font-bold">{h.title}</p>
+                <p className="mt-1 text-xs text-muted">
+                  {h.source} · sentiment {h.sentiment} · {h.published_at.slice(0, 10)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {analysis.filings && analysis.filings.filing_count > 0 && (
+        <Card className="lg:col-span-2">
+          <h2 className="font-extrabold">SEC filings (RAG)</h2>
+          <ul className="mt-4 space-y-3">
+            {analysis.filings.filings.map((f) => (
+              <li key={f.chunk_id}>
+                <p className="text-xs font-bold text-teal">{f.source}</p>
+                <p className="mt-1 text-sm text-muted">{f.content}</p>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <Card className="lg:col-span-2">
         <h2 className="font-extrabold">Compare tickers</h2>

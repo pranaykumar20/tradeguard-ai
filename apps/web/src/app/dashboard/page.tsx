@@ -5,11 +5,13 @@ import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import {
   getAdvancedRisk,
+  getMacroRegime,
   getRiskRules,
   getRiskSnapshot,
   previewTrade,
   compareTickers,
   type AdvancedRisk,
+  type MacroRegime,
   type RiskRules,
   type RiskSnapshot,
   type TradePreview,
@@ -30,6 +32,7 @@ export default function DashboardPage() {
     { ticker: string; composite_score: number; setup_label: string; risk_verdict: string }[]
   >([]);
   const [advanced, setAdvanced] = useState<AdvancedRisk | null>(null);
+  const [regime, setRegime] = useState<MacroRegime | null>(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     ticker: "NVDA",
@@ -46,6 +49,7 @@ export default function DashboardPage() {
       .then((r) => setWatchlist(r.tickers))
       .catch(() => {});
     getAdvancedRisk().then(setAdvanced).catch(() => {});
+    getMacroRegime().then(setRegime).catch(() => {});
   }, []);
 
   async function runPreview(e: React.FormEvent) {
@@ -68,8 +72,37 @@ export default function DashboardPage() {
       <main className="mx-auto w-full max-w-[1400px] flex-1 p-7">
         <PageHeader
           title="Dashboard"
-          subtitle="Connected: Demo portfolio · Mock data for MVP"
+          subtitle={
+            regime?.enabled
+              ? `Macro regime: ${regime.label} · Demo portfolio`
+              : "Connected: Demo portfolio · Mock data for MVP"
+          }
         />
+
+        {regime?.enabled && (
+          <Card className="mb-[18px]">
+            <h2 className="text-lg font-bold">Macro Regime</h2>
+            <p className="mt-2 text-sm text-muted">{regime.guidance}</p>
+            <div className="mt-3 grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
+              <div>
+                <span className="text-muted">Regime</span>
+                <p className="font-bold">{regime.label}</p>
+              </div>
+              <div>
+                <span className="text-muted">Score adj.</span>
+                <p className="font-bold">{regime.risk_score_adjustment >= 0 ? "+" : ""}{regime.risk_score_adjustment}</p>
+              </div>
+              <div>
+                <span className="text-muted">VIX proxy</span>
+                <p className="font-bold">{regime.signals.vix_proxy}</p>
+              </div>
+              <div>
+                <span className="text-muted">QQQ trend</span>
+                <p className="font-bold">{regime.signals.qqq_trend}</p>
+              </div>
+            </div>
+          </Card>
+        )}
 
         {snapshot && (
           <div className="grid grid-cols-2 gap-[18px] lg:grid-cols-4">

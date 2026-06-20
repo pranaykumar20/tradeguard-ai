@@ -2,10 +2,12 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import advanced_risk, analysis, automation, chat, execution, health, journal, monitoring, portfolio, risk, strategies, validation
+from app.api.routes import advanced_risk, analysis, auth, automation, chat, execution, health, intelligence, journal, monitoring, portfolio, risk, strategies, validation
 
 api_router = APIRouter()
-api_router.include_router(health.router, tags=["health"])
+api_router.include_router(health.router, prefix="/health", tags=["health"])
+api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(intelligence.router, prefix="/intelligence", tags=["intelligence"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
 api_router.include_router(risk.router, prefix="/risk", tags=["risk"])

@@ -48,7 +48,6 @@ class JournalService:
 
         price = fill_price or trade["limit_price"]
         direction = 1 if trade["side"] == "buy" else -1
-        # Mock PnL: random walk proxy from limit price
         pnl = round(direction * trade["quantity"] * price * 0.012, 2)
 
         updated = await storage.update_paper_trade(

@@ -8,9 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.core.middleware import UserContextMiddleware
+from app.core.user_context import for_each_user
 from app.db.storage import close_storage, init_storage
 from app.rag.service import RAGService
 from app.services.ml_bootstrap import ensure_direction_model
+from app.services.sec_filings import SecFilingService
 from app.tasks.market import refresh_market_features_async
 from app.tasks.monitoring import run_monitoring_check_async
 from app.tasks.strategies import run_strategy_eval_async
@@ -25,12 +28,13 @@ async def lifespan(app: FastAPI):
     await ensure_direction_model()
     rag = RAGService()
     await rag.ensure_index()
+    await SecFilingService().ensure_index()
     await refresh_market_features_async()
-    await run_monitoring_check_async()
+    await for_each_user(run_monitoring_check_async)
     strategy_service = StrategyService()
-    await strategy_service.ensure_defaults()
-    await ValidationService().build_report()
-    await run_strategy_eval_async()
+    await for_each_user(strategy_service.ensure_defaults)
+    await for_each_user(ValidationService().build_report)
+    await for_each_user(run_strategy_eval_async)
     yield
     await close_storage()
 
@@ -38,10 +42,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="AI Stock Risk Manager — ML signals, RAG, risk engine, Robinhood MCP",
-    version="0.3.0",
+    version="0.6.0",
     lifespan=lifespan,
 )
 
+app.add_middleware(UserContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -59,7 +64,11 @@ async def health():
         "status": "ok",
         "service": settings.app_name,
         "env": settings.app_env,
-        "phase": 4,
+        "phase": 6,
+        "auth_enabled": settings.auth_enabled,
+        "news_provider": settings.active_news_provider,
+        "regime_detection_enabled": settings.regime_detection_enabled,
+        "sec_filings_enabled": settings.sec_filings_enabled,
         "market_provider": settings.active_market_provider,
         "embedding_provider": settings.active_embedding_provider,
         "alert_provider": settings.active_alert_provider,
@@ -68,3 +77,10 @@ async def health():
         "validation_gate_enabled": settings.validation_gate_enabled,
         "automation_feature_enabled": settings.automation_feature_enabled,
     }
+
+
+@app.get("/health/ready")
+async def health_ready():
+    from app.api.routes.health import readiness
+
+    return await readiness()

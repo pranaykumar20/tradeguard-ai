@@ -12,21 +12,30 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 
 ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "models" / "artifacts"
+FEATURE_COLS = [
+    "price_vs_20dma",
+    "price_vs_50dma",
+    "rsi_14",
+    "macd_signal",
+    "atr_percent",
+    "volume_spike",
+]
 
 
 def train_direction_model(
     df: pd.DataFrame,
-    feature_cols: list[str],
+    feature_cols: list[str] | None = None,
     target_col: str = "target_up_5d",
 ) -> dict:
     """Train a direction classifier with time-based split."""
+    cols = feature_cols or FEATURE_COLS
     split_idx = int(len(df) * 0.8)
     train, test = df.iloc[:split_idx], df.iloc[split_idx:]
 
     model = RandomForestClassifier(n_estimators=200, max_depth=8, random_state=42)
-    model.fit(train[feature_cols], train[target_col])
+    model.fit(train[cols], train[target_col])
 
-    preds = model.predict(test[feature_cols])
+    preds = model.predict(test[cols])
     metrics = {
         "accuracy": float(accuracy_score(test[target_col], preds)),
         "report": classification_report(test[target_col], preds, output_dict=True),

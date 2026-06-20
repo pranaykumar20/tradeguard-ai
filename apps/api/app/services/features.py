@@ -10,9 +10,14 @@ from app.core.config import settings
 from app.db.storage import get_storage
 from app.ml.training import predict_direction
 from app.providers.market.factory import get_market_data_provider
+from app.services.news import NewsService
+
+_news = NewsService()
 
 
-def _bars_to_features(ticker: str, bars: pd.DataFrame, qqq_trend: str, vix_change: float) -> dict:
+def _bars_to_features(
+    ticker: str, bars: pd.DataFrame, qqq_trend: str, vix_change: float, news_sentiment: float
+) -> dict:
     close = bars["close"]
     high = bars["high"]
     low = bars["low"]
@@ -49,7 +54,7 @@ def _bars_to_features(ticker: str, bars: pd.DataFrame, qqq_trend: str, vix_chang
         "macd_signal": round(macd_signal, 2),
         "atr_percent": round(atr_pct, 2),
         "volume_spike": round(vol_spike, 2),
-        "news_sentiment_score": round(50 + feature_vector[0] * 2, 0),
+        "news_sentiment_score": round(news_sentiment, 1),
         "qqq_trend": qqq_trend,
         "vix_change": round(vix_change, 1),
         "sector_strength": round(min(95, max(35, 55 + feature_vector[0])), 0),
@@ -79,7 +84,8 @@ async def compute_ticker_features(ticker: str, use_cache: bool = True) -> dict[s
     qqq_ret = qqq_close.pct_change().dropna()
     vix_change = float(qqq_ret.tail(5).std() * 100 * 10) if len(qqq_ret) > 5 else 2.0
 
-    features = _bars_to_features(ticker, bars, qqq_trend, vix_change)
+    news_sentiment = await _news.sentiment_score(ticker)
+    features = _bars_to_features(ticker, bars, qqq_trend, vix_change, news_sentiment)
     await storage.cache_features(ticker, features, provider.provider_name)
     return features
 

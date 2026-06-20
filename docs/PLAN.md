@@ -35,6 +35,11 @@ flowchart TB
     end
 
     phase1 --> phase2 --> phase3 --> phase4
+    phase4 --> phase5[Phase5 Production]
+    phase5 --> phase6[Phase6 Intelligence]
+    phase6 --> phase7[Phase7 Execution]
+    phase7 --> phase8[Phase8 Observability]
+    phase8 --> phase9[Phase9 ProductUX]
 ```
 
 ---
@@ -50,6 +55,17 @@ flowchart TB
 | **Phase 4.2** — Semi-auto strategies | **Done** | Pre-defined rules, ALLOW-only auto-approve, `/strategies` UI |
 | **Phase 4.3** — Validation gate | **Done** | Sharpe, drawdown, win rate report; blocks automation until pass |
 | **Phase 4.4** — Constrained automation | **Done** | Master kill switch, daily caps, ALLOW-only, audit trail |
+| **Phase 5.1** — API deploy | **Done** | Dockerfile, Railway/Fly, `/health/ready`, [DEPLOY.md](./DEPLOY.md) |
+| **Phase 5.2** — Auth & multi-user | **Done** | Clerk optional, User model, JWT middleware, per-user scoping |
+| **Phase 5.3** — Email alerts | **Done** | SMTP provider, composite Slack+email dispatch |
+| **Phase 5.4** — CI/CD & secrets | **Done** | Staging workflow, Docker CI, deploy docs |
+| **Phase 6.1** — News / sentiment | **Done** | Mock + Polygon news, sentiment in features & chat |
+| **Phase 6.2** — ML retrain | **Done** | Journal-augmented retrain, versioning, `/api/intelligence/ml` |
+| **Phase 6.3** — SEC filing RAG | **Done** | Mock 10-K summaries indexed into pgvector RAG |
+| **Phase 6.4** — Regime detection | **Done** | VIX/macro regime, score adjustment, dashboard widget |
+| **Phase 7** — Execution expansion | **Planned** | Multi-broker, tax-aware rebalance, options, households |
+| **Phase 8** — Observability | **Planned** | Trade replay, audit exports, drift alerts, backtesting |
+| **Phase 9** — Product & UX | **Planned** | Mobile approvals, push, strategy builder, onboarding |
 
 **Provider pattern:** All external services use `auto` mode — mock when no API key, live when configured. Swap keys at the end; no code changes required.
 
@@ -58,8 +74,10 @@ flowchart TB
 | Market data | `MockMarketDataProvider` | Polygon | `POLYGON_API_KEY` |
 | Embeddings / RAG | `MockEmbeddingProvider` | OpenAI | `OPENAI_API_KEY` |
 | MCP / execution | `MockRobinhoodMCPClient` | Live MCP SDK | `ROBINHOOD_MCP_URL` |
-| Alerts | `MockAlertProvider` | Slack webhook | `SLACK_WEBHOOK_URL` |
+| Alerts | `MockAlertProvider` | Slack + SMTP email | `SLACK_WEBHOOK_URL`, `SMTP_*` |
+| Auth | Disabled (demo user) | Clerk JWT | `CLERK_SECRET_KEY` |
 | Storage | File-backed memory | PostgreSQL + pgvector | `docker compose up -d` |
+| API hosting | Local uvicorn | Railway / Fly.io | See [DEPLOY.md](./DEPLOY.md) |
 
 ---
 
@@ -180,7 +198,117 @@ gantt
     4.4 Automation        :done, p44, after p43, 3w
 ```
 
-**Phase 4 complete.** All four phases implemented (mock-first; swap API keys for live).
+**Phases 1–4 complete.** Phase 5+ in progress — see below.
+
+---
+
+## Phase 5 — Production Hardening *(in progress)*
+
+**Goal:** Run TradeGuard in production with managed Postgres/Redis, authenticated users, reliable alerts, and safe CI/CD.
+
+| Sub-phase | Description | Status |
+|-----------|-------------|--------|
+| **5.1** API deploy | Dockerfile, Railway + Fly configs, `/health/ready`, [DEPLOY.md](./DEPLOY.md) | Done |
+| **5.2** Auth & multi-user | Clerk (optional), User model, JWT middleware, per-user journal/portfolio | Done |
+| **5.3** Email alerts | SMTP provider, composite multi-channel dispatch | Done |
+| **5.4** CI/CD & secrets | Staging branch deploy, Docker build in CI, secrets checklist | Done |
+
+**Gate:** API reachable on Railway/Fly with Postgres + Redis; Vercel frontend talks to prod API; alerts fire on Slack and/or email.
+
+---
+
+## Phase 6 — Intelligence Upgrades *(done)*
+
+**Goal:** Smarter analysis — news, retrained models, richer RAG, macro-aware risk.
+
+| Sub-phase | Description | Status |
+|-----------|-------------|--------|
+| **6.1** News / sentiment agent | Headline ingestion, ticker sentiment scores, chat tool | Done |
+| **6.2** ML retraining on journal | Periodic retrain from filled trades; model versioning | Done |
+| **6.3** SEC filing RAG | EDGAR ingestion, chunk + embed 10-K/10-Q summaries | Done |
+| **6.4** Regime detection | VIX/macro features in risk scoring; regime labels in dashboard | Done |
+
+**Gate:** Ticker analysis cites news + filings; risk score adjusts in high-VIX regimes. ✅
+
+---
+
+## Phase 7 — Execution & Portfolio Expansion *(planned)*
+
+**Goal:** Beyond single Robinhood Agentic account — more brokers, tax logic, controlled options, households.
+
+| Sub-phase | Description | Status |
+|-----------|-------------|--------|
+| **7.1** Multi-broker abstraction | Broker adapter interface; Robinhood MCP as first impl | Planned |
+| **7.2** Tax-aware rebalancing | Lot tracking, wash-sale awareness in strategy proposals | Planned |
+| **7.3** Options workflow | Mandatory manual approval path; stricter risk caps | Planned |
+| **7.4** Multi-account / household | Link multiple accounts; aggregated exposure view | Planned |
+
+**Gate:** Household dashboard shows combined exposure; options require explicit approval every time.
+
+---
+
+## Phase 8 — Observability & Compliance *(planned)*
+
+**Goal:** Auditability, incident response, and strategy validation before live capital.
+
+| Sub-phase | Description | Status |
+|-----------|-------------|--------|
+| **8.1** Trade replay & post-mortem | Timeline UI per trade; decision → risk → execution chain | Planned |
+| **8.2** Regulatory-style audit exports | CSV/JSON export of journal, approvals, automation log | Planned |
+| **8.3** Platform alerting | MCP failure, API latency, model drift alerts | Planned |
+| **8.4** Journal backtesting | Replay strategies against historical journal entries | Planned |
+
+**Gate:** One-click export of 90-day audit trail; backtest report for any strategy.
+
+---
+
+## Phase 9 — Product & UX *(planned)*
+
+**Goal:** Production-grade UX for operators approving trades on the go.
+
+| Sub-phase | Description | Status |
+|-----------|-------------|--------|
+| **9.1** Mobile-friendly approvals | Responsive `/approvals`; touch-first approve/reject | Planned |
+| **9.2** Push notifications | Web push for BLOCK / halt / pending approval | Planned |
+| **9.3** Visual strategy builder | Rule builder UI replacing raw JSON config | Planned |
+| **9.4** Agentic onboarding wizard | Step-by-step MCP connect, fund account, set limits | Planned |
+
+**Gate:** Approve a trade from mobile; complete onboarding without reading MCP-SETUP.md.
+
+---
+
+## Build Sequence (Phases 5–9)
+
+```mermaid
+gantt
+    title TradeGuard Phases 5-9
+    dateFormat YYYY-MM
+    section Phase5
+    5.1 ApiDeploy         :active, p51, 2026-06, 2w
+    5.2 AuthMultiUser     :p52, after p51, 3w
+    5.3 EmailAlerts       :active, p53, after p51, 1w
+    5.4 CICDSecrets       :active, p54, after p51, 2w
+    section Phase6
+    6.1 NewsSentiment     :p61, after p52, 3w
+    6.2 MLRetrain         :p62, after p61, 3w
+    6.3 SecRag            :p63, after p62, 3w
+    6.4 RegimeDetection   :p64, after p63, 2w
+    section Phase7
+    7.1 MultiBroker       :p71, after p64, 4w
+    7.2 TaxRebalance      :p72, after p71, 3w
+    7.3 OptionsFlow       :p73, after p72, 2w
+    7.4 Household         :p74, after p73, 3w
+    section Phase8
+    8.1 TradeReplay       :p81, after p74, 3w
+    8.2 AuditExports      :p82, after p81, 2w
+    8.3 PlatformAlerts    :p83, after p82, 2w
+    8.4 Backtesting       :p84, after p83, 3w
+    section Phase9
+    9.1 MobileApprovals   :p91, after p84, 2w
+    9.2 PushNotifs        :p92, after p91, 2w
+    9.3 StrategyBuilder   :p93, after p92, 3w
+    9.4 OnboardingWizard  :p94, after p93, 2w
+```
 
 ---
 
@@ -211,3 +339,10 @@ Configured in `apps/api/app/risk/rules.py` — never weaken without explicit gat
 | Validation | `apps/api/app/services/validation.py` |
 | Automation | `apps/api/app/services/automation.py` |
 | Web dashboard | `apps/web/src/app/` |
+| Deployment | [docs/DEPLOY.md](./DEPLOY.md) |
+| Auth | `apps/api/app/core/auth.py` |
+| Intelligence / news | `apps/api/app/services/news.py` |
+| SEC filings RAG | `apps/api/app/services/sec_filings.py` |
+| Regime detection | `apps/api/app/services/regime.py` |
+| ML retrain | `apps/api/app/services/ml_retrain.py` |
+| Docker / Railway | `apps/api/Dockerfile`, `apps/api/railway.toml` |

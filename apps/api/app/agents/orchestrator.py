@@ -10,7 +10,10 @@ from app.ml.scoring import score_ticker
 from app.rag.service import RAGService
 from app.risk.engine import RiskEngine, RiskVerdict
 from app.services.features import compute_ticker_features
+from app.services.news import NewsService
 from app.db.storage import get_storage
+
+_news = NewsService()
 
 logger = structlog.get_logger()
 
@@ -41,6 +44,7 @@ class TradeGuardOrchestrator:
         primary = tickers[0]
         features = await compute_ticker_features(primary)
         scores = score_ticker(features, primary)
+        news_data = await _news.get_ticker_news(primary, limit=3)
         verdict = self.risk.evaluate_ticker(primary, features, scores)
 
         trade_preview = None
@@ -64,9 +68,11 @@ class TradeGuardOrchestrator:
         verdict = RiskVerdict(verdict=final_verdict, warnings=all_warnings, blocks=all_blocks)
 
         context = self._build_context(
-            primary, features, scores, verdict, snapshot, rag_chunks, trade_preview
+            primary, features, scores, verdict, snapshot, rag_chunks, trade_preview, news_data
         )
-        reply = await self._compose_reply(message, context, primary, features, scores, verdict, snapshot, rag_chunks, trade_preview)
+        reply = await self._compose_reply(
+            message, context, primary, features, scores, verdict, snapshot, rag_chunks, trade_preview, news_data
+        )
 
         decision = scores["label"]
         if verdict.verdict == "BLOCK":
@@ -86,6 +92,11 @@ class TradeGuardOrchestrator:
         }
         if trade_preview:
             result["trade_preview"] = trade_preview
+        if news_data:
+            result["news"] = {
+                "sentiment_label": news_data.get("sentiment_label"),
+                "headlines": news_data.get("headlines", [])[:3],
+            }
 
         storage = await get_storage()
         await storage.save_chat_message(sid, "user", message)
@@ -126,6 +137,7 @@ class TradeGuardOrchestrator:
         snapshot: dict,
         rag_chunks,
         trade_preview: dict | None,
+        news_data: dict | None = None,
     ) -> str:
         lines = [
             f"Ticker: {ticker}",
@@ -137,6 +149,11 @@ class TradeGuardOrchestrator:
             f"Portfolio risk: {snapshot['risk_label']} ({snapshot['risk_score']}/100)",
             f"Tech exposure: {snapshot['sector_exposure'].get('Technology', 0):.1f}%",
         ]
+        if news_data and news_data.get("headlines"):
+            top = news_data["headlines"][0]
+            lines.append(
+                f"Latest news ({news_data.get('sentiment_label', 'Neutral')}): {top.get('title', '')}"
+            )
         if verdict.warnings:
             lines.append("Warnings: " + "; ".join(verdict.warnings))
         if verdict.blocks:
@@ -162,6 +179,7 @@ class TradeGuardOrchestrator:
         snapshot: dict,
         rag_chunks,
         trade_preview: dict | None,
+        news_data: dict | None = None,
     ) -> str:
         try:
             llm_reply = await generate_reply(message, context)
@@ -171,7 +189,9 @@ class TradeGuardOrchestrator:
         except Exception:
             logger.info("llm_fallback_to_template", ticker=ticker)
 
-        return self._format_analysis(ticker, features, scores, verdict, snapshot, rag_chunks, trade_preview)
+        return self._format_analysis(
+            ticker, features, scores, verdict, snapshot, rag_chunks, trade_preview, news_data
+        )
 
     async def _general_response(self, sid: str, message: str, snapshot: dict, rag_chunks) -> dict:
         context = (
@@ -214,7 +234,7 @@ class TradeGuardOrchestrator:
         }
 
     def _format_analysis(
-        self, ticker, features, scores, verdict, snapshot, rag_chunks, trade_preview=None
+        self, ticker, features, scores, verdict, snapshot, rag_chunks, trade_preview=None, news_data=None
     ) -> str:
         lines = [
             f"## {ticker} — {verdict.verdict}",
@@ -249,6 +269,15 @@ class TradeGuardOrchestrator:
             lines.extend(["", "**Warnings**", *[f"- {w}" for w in verdict.warnings]])
         if verdict.blocks:
             lines.extend(["", "**Blocks**", *[f"- {b}" for b in verdict.blocks]])
+
+        if news_data and news_data.get("headlines"):
+            lines.extend(
+                [
+                    "",
+                    f"**News ({news_data.get('sentiment_label', 'Neutral')})**",
+                    *[f"- {h['title']}" for h in news_data["headlines"][:3]],
+                ]
+            )
 
         lines.extend(
             [

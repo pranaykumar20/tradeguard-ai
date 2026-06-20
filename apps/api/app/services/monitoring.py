@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import structlog
 
 from app.core.config import settings
+from app.core.user_context import get_current_user_id
 from app.db.storage import get_storage
 from app.mcp.factory import get_mcp_client
 from app.portfolio.demo import demo_portfolio
@@ -134,6 +135,7 @@ class MonitoringService:
             return None
 
         result = await self.alerts.send(title, detail, severity, event_type)
+        channels = result.get("channels") or [result.get("provider", "unknown")]
         try:
             storage = await get_storage()
         except RuntimeError:
@@ -143,7 +145,7 @@ class MonitoringService:
                 "severity": severity,
                 "title": title,
                 "detail": detail,
-                "channels_sent": [result.get("provider", "unknown")],
+                "channels_sent": channels,
             }
         event = await storage.create_alert_event(
             {
@@ -151,7 +153,7 @@ class MonitoringService:
                 "severity": severity,
                 "title": title,
                 "detail": detail,
-                "channels_sent": [result.get("provider", "unknown")],
+                "channels_sent": channels,
             }
         )
         return event
@@ -252,6 +254,7 @@ class MonitoringService:
 
         return {
             "status": "halted" if halted else "ok",
+            "user_id": get_current_user_id(),
             "trading_halted": halted,
             "halt_reason": halt_reason if halted else None,
             "daily_pnl": daily_pnl,
@@ -274,6 +277,7 @@ class MonitoringService:
             recent = []
         return {
             "monitoring_enabled": settings.monitoring_enabled,
+            "user_id": get_current_user_id(),
             "trading_halted": halted,
             "halt_reason": reason if halted else None,
             "trading_state": state,
