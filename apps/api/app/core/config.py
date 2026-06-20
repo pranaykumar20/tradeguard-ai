@@ -52,8 +52,11 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     anthropic_api_key: str = ""
-    llm_model: str = "gpt-4o-mini"
-    llm_provider: str = "openai"
+    cursor_api_key: str = ""
+    llm_model: str = "composer-2.5"
+    llm_provider: str = "cursor"  # cursor | openai | anthropic
+    cursor_workspace: str = ""  # local bridge cwd; defaults to repo root
+    cursor_cloud_repo_url: str = ""  # optional — use cloud agents when set (production)
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
 

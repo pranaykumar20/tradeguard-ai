@@ -45,7 +45,11 @@ async def readiness():
         "automation_feature_enabled": settings.automation_feature_enabled,
         "mcp_configured": mcp.is_configured,
         "mcp_enabled": settings.robinhood_mcp_enabled,
-        "llm_configured": bool(settings.openai_api_key or settings.anthropic_api_key),
+        "llm_configured": bool(
+            settings.cursor_api_key or settings.openai_api_key or settings.anthropic_api_key
+        ),
+        "llm_provider": settings.llm_provider,
+        "llm_model": settings.llm_model,
         "polygon_key_set": bool(settings.polygon_api_key),
         "openai_key_set": bool(settings.openai_api_key),
         "slack_configured": settings.use_slack_alerts,

@@ -1,5 +1,7 @@
 """LLM service — explains analysis; risk engine verdict is always final."""
 
+from pathlib import Path
+
 import structlog
 
 from app.core.config import settings
@@ -18,13 +20,66 @@ Rules you MUST follow:
 - Never recommend options unless explicitly allowed in the context."""
 
 
+def _cursor_workspace() -> str:
+    if settings.cursor_workspace:
+        return settings.cursor_workspace
+    # apps/api/app/agents/llm.py -> monorepo root
+    return str(Path(__file__).resolve().parents[4])
+
+
+def _cursor_model() -> str:
+    model = settings.llm_model.strip()
+    if model.startswith("composer"):
+        return model
+    return "composer-2.5"
+
+
 async def generate_reply(user_message: str, context: str) -> str | None:
     """Return LLM-generated reply, or None if no provider is configured."""
+    if settings.llm_provider == "cursor" and settings.cursor_api_key:
+        return await _cursor_reply(user_message, context)
     if settings.llm_provider == "anthropic" and settings.anthropic_api_key:
         return await _anthropic_reply(user_message, context)
+    if settings.llm_provider == "openai" and settings.openai_api_key:
+        return await _openai_reply(user_message, context)
+    # Legacy auto: any configured key when provider not explicitly cursor/openai/anthropic
     if settings.openai_api_key:
         return await _openai_reply(user_message, context)
     return None
+
+
+async def _cursor_reply(user_message: str, context: str) -> str:
+    from cursor_sdk import AgentOptions, AsyncAgent, CloudAgentOptions, CloudRepository, LocalAgentOptions
+
+    options_kwargs: dict = {
+        "model": _cursor_model(),
+        "api_key": settings.cursor_api_key,
+        "mode": "plan",
+    }
+    if settings.cursor_cloud_repo_url:
+        options_kwargs["cloud"] = CloudAgentOptions(
+            repos=[CloudRepository(url=settings.cursor_cloud_repo_url)],
+        )
+    else:
+        options_kwargs["local"] = LocalAgentOptions(cwd=_cursor_workspace())
+
+    prompt = (
+        f"{SYSTEM_PROMPT}\n\n"
+        "Respond in markdown only. Do not edit files, run shell commands, or use tools.\n\n"
+        f"Context:\n{context}\n\nUser question:\n{user_message}"
+    )
+
+    try:
+        result = await AsyncAgent.prompt(prompt, AgentOptions(**options_kwargs))
+        if result.status == "error":
+            raise RuntimeError(f"Cursor agent run failed: {result.id}")
+        text = (result.result or "").strip()
+        if not text:
+            raise RuntimeError("Cursor agent returned empty reply")
+        return text
+    except Exception as exc:
+        logger.warning("llm_cursor_failed", error=str(exc), model=_cursor_model())
+        raise
 
 
 async def _openai_reply(user_message: str, context: str) -> str:

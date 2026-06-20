@@ -37,6 +37,9 @@ openai==1.58.1
 # MCP
 mcp==1.9.0
 
+# Cursor SDK — Composer 2.5 agent (optional; template fallback when unset)
+cursor-sdk==0.1.8
+
 # Utilities
 python-dotenv==1.0.1
 structlog==24.4.0
