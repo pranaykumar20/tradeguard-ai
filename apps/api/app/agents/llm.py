@@ -23,8 +23,13 @@ Rules you MUST follow:
 def _cursor_workspace() -> str:
     if settings.cursor_workspace:
         return settings.cursor_workspace
-    # apps/api/app/agents/llm.py -> monorepo root
-    return str(Path(__file__).resolve().parents[4])
+    module_dir = Path(__file__).resolve().parent
+    for ancestor in module_dir.parents:
+        if (ancestor / "apps" / "api").is_dir() and (ancestor / "apps" / "web").is_dir():
+            return str(ancestor)
+    if len(module_dir.parents) > 2:
+        return str(module_dir.parents[2])
+    return str(module_dir.parent)
 
 
 def _cursor_model() -> str:

@@ -217,10 +217,18 @@ class TradeGuardOrchestrator:
         reply = None
         try:
             reply = await generate_reply(message, context)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("llm_fallback_to_template", error=str(exc))
 
         if not reply:
+            if not (
+                settings.cursor_api_key
+                or settings.openai_api_key
+                or settings.anthropic_api_key
+            ):
+                logger.info("llm_not_configured", provider=settings.llm_provider)
+            else:
+                logger.warning("llm_empty_reply", provider=settings.llm_provider)
             reply = (
                 f"**Portfolio Risk: {snapshot['risk_label']}** ({snapshot['risk_score']}/100)\n\n"
                 f"Account value: ${snapshot['portfolio_value']:,.2f} | "
