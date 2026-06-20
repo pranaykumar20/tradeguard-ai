@@ -2,7 +2,7 @@
 
 import json
 
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,15 @@ def _parse_cors_origins(value: str) -> list[str]:
     if stripped.startswith("["):
         return json.loads(stripped)
     return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+
+
+def _redis_db_url(redis_url: str, db: int) -> str:
+    """Build redis://…/N, replacing any existing trailing database index."""
+    base = redis_url.rstrip("/")
+    last = base.rsplit("/", 1)[-1]
+    if last.isdigit():
+        base = base.rsplit("/", 1)[0]
+    return f"{base}/{db}"
 
 
 class Settings(BaseSettings):
@@ -44,6 +53,17 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6380/0"
     celery_broker_url: str = "redis://localhost:6380/1"
     celery_result_backend: str = "redis://localhost:6380/2"
+
+    @model_validator(mode="after")
+    def derive_celery_from_redis(self) -> "Settings":
+        """When REDIS_URL is set (e.g. Railway), default Celery URLs to /1 and /2 on same host."""
+        if self.redis_url == "redis://localhost:6380/0":
+            return self
+        if self.celery_broker_url == "redis://localhost:6380/1":
+            self.celery_broker_url = _redis_db_url(self.redis_url, 1)
+        if self.celery_result_backend == "redis://localhost:6380/2":
+            self.celery_result_backend = _redis_db_url(self.redis_url, 2)
+        return self
 
     # auto = use live provider when API key is set, otherwise mock
     market_data_provider: str = "auto"

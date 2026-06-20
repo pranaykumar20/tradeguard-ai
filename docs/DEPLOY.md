@@ -21,6 +21,8 @@ Vercel (Next.js)  ──HTTPS──▶  Railway/Fly (FastAPI)
 
 ## 1. Backend — Railway (recommended)
 
+**Step-by-step guide:** [RAILWAY.md](./RAILWAY.md)
+
 ### Create services
 
 1. **New Project** → Add **PostgreSQL** and **Redis** plugins
@@ -31,10 +33,10 @@ Vercel (Next.js)  ──HTTPS──▶  Railway/Fly (FastAPI)
 
 | Variable | Source |
 |----------|--------|
-| `DATABASE_URL` | Auto-injected by Railway Postgres (auto-normalized to asyncpg) |
-| `REDIS_URL` | Auto-injected by Railway Redis |
-| `CELERY_BROKER_URL` | Same Redis URL, db `/1` |
-| `CELERY_RESULT_BACKEND` | Same Redis URL, db `/2` |
+| `DATABASE_URL` | Reference `${{Postgres.DATABASE_URL}}` |
+| `REDIS_URL` | Reference `${{Redis.REDIS_URL}}` |
+| `CELERY_BROKER_URL` | Auto-derived from `REDIS_URL` → `/1` |
+| `CELERY_RESULT_BACKEND` | Auto-derived from `REDIS_URL` → `/2` |
 | `STORAGE_BACKEND` | `postgres` |
 | `APP_ENV` | `production` |
 | `CORS_ORIGINS` | Your Vercel URL(s), e.g. `https://tradeguard-ai.vercel.app` |
@@ -43,7 +45,9 @@ Vercel (Next.js)  ──HTTPS──▶  Railway/Fly (FastAPI)
 
 | Variable | Purpose |
 |----------|---------|
-| `OPENAI_API_KEY` | LLM + embeddings |
+| `CURSOR_API_KEY` + `CURSOR_CLOUD_REPO_URL` | Composer 2.5 LLM (production) |
+| `LLM_PROVIDER` / `LLM_MODEL` | `cursor` / `composer-2.5` |
+| `OPENAI_API_KEY` | Embeddings + fallback LLM |
 | `POLYGON_API_KEY` | Live market data |
 | `SLACK_WEBHOOK_URL` | Slack alerts |
 | `SMTP_*` + `ALERT_EMAIL_TO` | Email alerts |
