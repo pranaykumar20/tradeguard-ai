@@ -71,10 +71,33 @@ _BUILTIN_PLAYBOOKS = [
 ]
 
 
-def default_playbooks_dir() -> Path:
+def _playbook_search_paths() -> list[Path]:
+    """Candidate playbook dirs — monorepo, Docker (/app), and explicit override."""
+    paths: list[Path] = []
     if settings.rag_playbooks_dir:
-        return Path(settings.rag_playbooks_dir)
-    return Path(__file__).resolve().parents[4] / "docs" / "playbooks"
+        paths.append(Path(settings.rag_playbooks_dir))
+
+    module_dir = Path(__file__).resolve().parent
+    paths.append(module_dir / "playbooks")
+    if len(module_dir.parents) > 2:
+        paths.append(module_dir.parents[2] / "playbooks")
+
+    seen: set[Path] = set()
+    for ancestor in module_dir.parents:
+        candidate = ancestor / "docs" / "playbooks"
+        if candidate not in seen:
+            paths.append(candidate)
+            seen.add(candidate)
+
+    return paths
+
+
+def default_playbooks_dir() -> Path:
+    for path in _playbook_search_paths():
+        if path.is_dir():
+            return path
+    # Missing dir — load_playbook_documents() uses builtin fallback
+    return _playbook_search_paths()[0]
 
 
 def _parse_markdown_sections(text: str) -> list[tuple[str, str]]:

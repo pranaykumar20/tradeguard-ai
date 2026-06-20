@@ -6,7 +6,7 @@ import pytest
 
 from app.providers.sec.edgar import EdgarClient, mock_filing_documents
 from app.rag.chunking import chunk_text, extract_section, strip_html
-from app.rag.playbooks import _parse_markdown_sections, load_playbook_documents
+from app.rag.playbooks import _parse_markdown_sections, default_playbooks_dir, load_playbook_documents
 
 
 def test_parse_markdown_sections():
@@ -15,6 +15,11 @@ def test_parse_markdown_sections():
     assert len(sections) == 3
     assert sections[1] == ("Rule A", "First rule.")
     assert sections[2] == ("Rule B", "Second rule.")
+
+
+def test_default_playbooks_dir_does_not_crash():
+    path = default_playbooks_dir()
+    assert isinstance(path, Path)
 
 
 def test_load_playbooks_from_directory(tmp_path: Path):
