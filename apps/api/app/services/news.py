@@ -111,6 +111,13 @@ class NewsService:
             live_search=bool(headlines),
         )
 
+    async def search_stock_price(self, ticker: str) -> dict:
+        """Live web price lookup via Tavily (include_answer)."""
+        tavily = self._tavily_provider()
+        if tavily is None:
+            return {"ticker": ticker.upper(), "answer": None, "provider": "none", "sources": []}
+        return await tavily.search_stock_price(ticker)
+
     async def get_ticker_news(self, ticker: str, limit: int = 8) -> dict:
         provider = get_news_provider()
         headlines = await provider.get_headlines(ticker.upper(), limit=limit)

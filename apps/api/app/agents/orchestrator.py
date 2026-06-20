@@ -6,12 +6,14 @@ import uuid
 import structlog
 
 from app.agents.llm import generate_reply
+from app.agents.tickers import extract_tickers, is_price_query
 from app.core.config import settings
 from app.ml.scoring import score_ticker
 from app.rag.service import RAGService, format_chunks_for_context
 from app.rag.tools import RAGTools
 from app.risk.engine import RiskEngine, RiskVerdict
 from app.services.features import compute_ticker_features
+from app.services.market_quotes import fetch_price_context, quote_to_dict
 from app.services.news import NewsService, format_news_for_context
 from app.db.storage import get_storage
 
@@ -19,7 +21,7 @@ _news = NewsService()
 
 logger = structlog.get_logger()
 
-TICKER_PATTERN = re.compile(r"\b(NVDA|MSFT|META|TSLA|QQQ|GBTC|AAPL|SPY|SMH)\b", re.I)
+TICKER_PATTERN = re.compile(r"\b(NVDA|MSFT|META|TSLA|QQQ|GBTC|AAPL|SPY|SMH)\b", re.I)  # trade intent parsing
 TRADE_SIDE_PATTERN = re.compile(r"\b(buy|sell|purchase|add)\b", re.I)
 OPTION_PATTERN = re.compile(r"\b(option|call|put|options)\b", re.I)
 
@@ -44,18 +46,37 @@ class TradeGuardOrchestrator:
             logger.warning("web_search_failed", error=str(exc), ticker=ticker)
             return {"headlines": [], "live_search": False}
 
+    async def _fetch_price_context(self, message: str, ticker: str | None) -> tuple[dict | None, str]:
+        if not ticker:
+            return None, ""
+        try:
+            include_web = is_price_query(message) or bool(settings.tavily_api_key)
+            quote, block = await fetch_price_context(ticker, include_web=include_web)
+            return quote, block
+        except Exception as exc:
+            logger.warning("price_context_failed", ticker=ticker, error=str(exc))
+            return None, ""
+
     async def handle_message(self, message: str, session_id: str | None = None) -> dict:
         sid = session_id or str(uuid.uuid4())
-        tickers = list(dict.fromkeys(m.upper() for m in TICKER_PATTERN.findall(message)))
+        tickers = extract_tickers(message)
         primary_ticker = tickers[0] if tickers else None
 
         rag_chunks, rag_tools_used = await self._retrieve_rag(message, primary_ticker)
         web_data = await self._fetch_web_context(message, primary_ticker)
+        quote_data, price_context = await self._fetch_price_context(message, primary_ticker)
         snapshot = await self.risk.portfolio_snapshot()
 
         if not tickers:
             result = await self._general_response(
-                sid, message, snapshot, rag_chunks, rag_tools_used, web_data
+                sid,
+                message,
+                snapshot,
+                rag_chunks,
+                rag_tools_used,
+                web_data,
+                price_context,
+                quote_data,
             )
             storage = await get_storage()
             await storage.save_chat_message(sid, "user", message)
@@ -89,10 +110,28 @@ class TradeGuardOrchestrator:
         verdict = RiskVerdict(verdict=final_verdict, warnings=all_warnings, blocks=all_blocks)
 
         context = self._build_context(
-            primary, features, scores, verdict, snapshot, rag_chunks, trade_preview, news_data
+            primary,
+            features,
+            scores,
+            verdict,
+            snapshot,
+            rag_chunks,
+            trade_preview,
+            news_data,
+            price_context,
         )
         reply = await self._compose_reply(
-            message, context, primary, features, scores, verdict, snapshot, rag_chunks, trade_preview, news_data
+            message,
+            context,
+            primary,
+            features,
+            scores,
+            verdict,
+            snapshot,
+            rag_chunks,
+            trade_preview,
+            news_data,
+            quote_data,
         )
 
         decision = scores["label"]
@@ -114,6 +153,8 @@ class TradeGuardOrchestrator:
             "rag_tools": rag_tools_used,
             "web_sources": news_data.get("headlines", [])[:5],
         }
+        if quote_data and quote_data.get("last_price") is not None:
+            result["quote"] = quote_to_dict(quote_data)
         if trade_preview:
             result["trade_preview"] = trade_preview
         if news_data.get("headlines"):
@@ -163,9 +204,11 @@ class TradeGuardOrchestrator:
         rag_chunks,
         trade_preview: dict | None,
         news_data: dict | None = None,
+        price_context: str = "",
     ) -> str:
         lines = [
             f"Ticker: {ticker}",
+            f"Last price: ${features['last_price']:.2f}",
             f"Risk verdict: {verdict.verdict} (FINAL — do not override)",
             f"Setup score: {scores['composite']}/100 ({scores['label']})",
             f"Technical: {scores['components']['technical']}, Macro: {scores['components']['macro']}, "
@@ -174,6 +217,8 @@ class TradeGuardOrchestrator:
             f"Portfolio risk: {snapshot['risk_label']} ({snapshot['risk_score']}/100)",
             f"Tech exposure: {snapshot['sector_exposure'].get('Technology', 0):.1f}%",
         ]
+        if price_context:
+            lines.append(price_context)
         if news_data and news_data.get("headlines"):
             lines.append(format_news_for_context(news_data))
         if verdict.warnings:
@@ -202,18 +247,32 @@ class TradeGuardOrchestrator:
         rag_chunks,
         trade_preview: dict | None,
         news_data: dict | None = None,
+        quote_data: dict | None = None,
     ) -> str:
         try:
             llm_reply = await generate_reply(message, context)
             if llm_reply:
                 header = f"## {ticker} — **{verdict.verdict}**\n\n"
-                return header + llm_reply.strip()
+                reply = header + llm_reply.strip()
+                return self._prepend_price_fact(reply, message, quote_data)
         except Exception:
             logger.info("llm_fallback_to_template", ticker=ticker)
 
-        return self._format_analysis(
+        body = self._format_analysis(
             ticker, features, scores, verdict, snapshot, rag_chunks, trade_preview, news_data
         )
+        return self._prepend_price_fact(body, message, quote_data)
+
+    @staticmethod
+    def _prepend_price_fact(reply: str, message: str, quote_data: dict | None) -> str:
+        if not is_price_query(message) or not quote_data or quote_data.get("last_price") is None:
+            return reply
+        live = "live" if quote_data.get("live") else "latest available"
+        header = (
+            f"**{quote_data['ticker']}** — **${quote_data['last_price']:.2f}** "
+            f"({quote_data.get('change_pct', 0):+.2f}%, {live} via {quote_data.get('provider', 'market')})\n\n"
+        )
+        return header + reply
 
     async def _general_response(
         self,
@@ -223,6 +282,8 @@ class TradeGuardOrchestrator:
         rag_chunks,
         rag_tools_used: list[str],
         web_data: dict,
+        price_context: str = "",
+        quote_data: dict | None = None,
     ) -> dict:
         context = (
             f"Portfolio risk: {snapshot['risk_label']} ({snapshot['risk_score']}/100)\n"
@@ -230,6 +291,8 @@ class TradeGuardOrchestrator:
             f"Tech exposure: {snapshot['sector_exposure'].get('Technology', 0):.1f}%\n"
             f"Alerts: {[a['detail'] for a in snapshot.get('alerts', [])]}"
         )
+        if price_context:
+            context += f"\n{price_context}"
         web_context = format_news_for_context(web_data)
         if web_context:
             context += f"\n{web_context}"
@@ -273,6 +336,8 @@ class TradeGuardOrchestrator:
             if rag_chunks:
                 reply += f"\n\n{format_chunks_for_context(rag_chunks)}"
 
+        reply = self._prepend_price_fact(reply, message, quote_data)
+
         warnings = [a["detail"] for a in snapshot.get("alerts", [])]
 
         result = {
@@ -286,6 +351,8 @@ class TradeGuardOrchestrator:
             "rag_tools": rag_tools_used,
             "web_sources": web_data.get("headlines", [])[:5],
         }
+        if quote_data and quote_data.get("last_price") is not None:
+            result["quote"] = quote_to_dict(quote_data)
         if web_data.get("headlines"):
             result["news"] = {
                 "sentiment_label": web_data.get("sentiment_label"),

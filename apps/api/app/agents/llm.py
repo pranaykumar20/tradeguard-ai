@@ -22,7 +22,8 @@ Rules you MUST follow:
 - Be concise, use markdown headers and bullet points.
 - Do not give generic financial advice; ground your reply in the provided context.
 - Never recommend options unless explicitly allowed in the context.
-- When live web search results are provided, cite recent headlines where relevant."""
+- When live web search results are provided, cite recent headlines where relevant.
+- When a stock quote is provided in context, state the exact price and change — do not invent prices."""
 
 
 def _cursor_workspace() -> str:

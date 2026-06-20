@@ -25,6 +25,7 @@ class ChatResponse(BaseModel):
     rag_sources: list[dict] = []
     rag_tools: list[str] = []
     web_sources: list[dict] = []
+    quote: dict | None = None
 
 
 @router.post("", response_model=ChatResponse)

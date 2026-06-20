@@ -21,9 +21,15 @@ class TavilyNewsProvider(NewsProvider):
     def __init__(self):
         self._fallback = MockNewsProvider()
 
-    async def _search(self, query: str, limit: int = 8) -> list[NewsHeadline]:
+    async def _search(
+        self,
+        query: str,
+        limit: int = 8,
+        *,
+        include_answer: bool = False,
+    ) -> tuple[list[NewsHeadline], str | None]:
         if not settings.tavily_api_key:
-            return []
+            return [], None
 
         payload = {
             "api_key": settings.tavily_api_key,
@@ -32,7 +38,7 @@ class TavilyNewsProvider(NewsProvider):
             "search_depth": settings.tavily_search_depth,
             "max_results": min(limit, 20),
             "days": settings.tavily_news_days,
-            "include_answer": False,
+            "include_answer": include_answer,
         }
 
         try:
@@ -59,10 +65,11 @@ class TavilyNewsProvider(NewsProvider):
                         url=item.get("url", ""),
                     )
                 )
-            return headlines[:limit]
+            answer = (data.get("answer") or "").strip() or None
+            return headlines[:limit], answer
         except Exception as exc:
             logger.warning("tavily_search_failed", query=query, error=str(exc))
-            return []
+            return [], None
 
     @staticmethod
     def _source_from_url(url: str) -> str:
@@ -80,7 +87,7 @@ class TavilyNewsProvider(NewsProvider):
             f"{ticker} stock news today earnings analyst price target "
             f"market sentiment breaking"
         )
-        headlines = await self._search(query, limit=limit)
+        headlines, _ = await self._search(query, limit=limit)
         if headlines:
             return headlines
         return await self._fallback.get_headlines(ticker, limit=limit)
@@ -90,8 +97,25 @@ class TavilyNewsProvider(NewsProvider):
             "US stock market news today S&P 500 Nasdaq Dow Fed rates "
             "earnings macro volatility"
         )
-        return await self._search(query, limit=limit)
+        headlines, _ = await self._search(query, limit=limit)
+        return headlines
 
     async def search_query(self, query: str, limit: int = 8) -> list[NewsHeadline]:
         """Run a custom Tavily news search (used by chat agent)."""
-        return await self._search(query, limit=limit)
+        headlines, _ = await self._search(query, limit=limit)
+        return headlines
+
+    async def search_stock_price(self, ticker: str) -> dict:
+        """Tavily search focused on current stock price (include_answer=True)."""
+        ticker = ticker.upper()
+        query = f"{ticker} stock price today current quote"
+        headlines, answer = await self._search(query, limit=3, include_answer=True)
+        return {
+            "ticker": ticker,
+            "query": query,
+            "answer": answer,
+            "provider": "tavily",
+            "sources": [
+                {"title": h.title, "url": h.url, "source": h.source} for h in headlines
+            ],
+        }
