@@ -13,9 +13,17 @@ import {
   type ExecutionPreview,
 } from "@/lib/api";
 
-const EMPTY_FORM = {
+type OrderForm = {
+  ticker: string;
+  side: "buy" | "sell";
+  quantity: number;
+  limit_price: string;
+  notes: string;
+};
+
+const EMPTY_FORM: OrderForm = {
   ticker: "NVDA",
-  side: "buy" as const,
+  side: "buy",
   quantity: 1,
   limit_price: "",
   notes: "",
@@ -191,7 +199,9 @@ export default function ApprovalsPage() {
                       label="Est. Cost"
                       value={`$${(selected.quantity * selected.limit_price).toFixed(2)}`}
                     />
-                    {mcp?.provider && <Row label="MCP" value={mcp.provider} />}
+                    {typeof mcp?.provider === "string" && (
+                      <Row label="MCP" value={mcp.provider} />
+                    )}
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <Btn disabled={loading} onClick={() => handleApprove(selected.id)}>
@@ -310,7 +320,10 @@ export default function ApprovalsPage() {
           {preview && (
             <div className="mt-4 rounded-[12px] border border-card-border p-3 text-sm">
               <div>
-                Risk: {preview.risk.verdict} · MCP: {preview.mcp.provider ?? preview.mcp_provider}
+                Risk: {preview.risk.verdict} · MCP:{" "}
+                {typeof preview.mcp.provider === "string"
+                  ? preview.mcp.provider
+                  : preview.mcp_provider}
               </div>
               <div className="tg-sub">
                 {preview.risk.allowed

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AccountRiskWidget } from "@/components/AccountRiskWidget";
 
-const NAV = [
+const NAV: { href: string; label: string; badge?: string }[] = [
   { href: "/", label: "AI Chat" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/portfolio", label: "Portfolio Risk" },
