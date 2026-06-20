@@ -6,12 +6,14 @@ import { Sidebar } from "@/components/Sidebar";
 import {
   getAdvancedRisk,
   getMacroRegime,
+  getMarketNews,
   getRiskRules,
   getRiskSnapshot,
   previewTrade,
   compareTickers,
   type AdvancedRisk,
   type MacroRegime,
+  type MarketNewsPulse,
   type RiskRules,
   type RiskSnapshot,
   type TradePreview,
@@ -33,6 +35,7 @@ export default function DashboardPage() {
   >([]);
   const [advanced, setAdvanced] = useState<AdvancedRisk | null>(null);
   const [regime, setRegime] = useState<MacroRegime | null>(null);
+  const [marketNews, setMarketNews] = useState<MarketNewsPulse | null>(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     ticker: "NVDA",
@@ -50,6 +53,7 @@ export default function DashboardPage() {
       .catch(() => {});
     getAdvancedRisk().then(setAdvanced).catch(() => {});
     getMacroRegime().then(setRegime).catch(() => {});
+    getMarketNews(6).then(setMarketNews).catch(() => {});
   }, []);
 
   async function runPreview(e: React.FormEvent) {
@@ -101,6 +105,38 @@ export default function DashboardPage() {
                 <p className="font-bold">{regime.signals.qqq_trend}</p>
               </div>
             </div>
+          </Card>
+        )}
+
+        {marketNews && (
+          <Card className="mb-[18px]">
+            <h2 className="text-lg font-bold">Market Pulse</h2>
+            <p className="tg-sub mt-1 text-sm">
+              {marketNews.live_search
+                ? `${marketNews.sentiment_label} · via ${marketNews.provider}`
+                : marketNews.hint}
+            </p>
+            {marketNews.headlines.length > 0 && (
+              <ul className="mt-3 space-y-2 text-sm">
+                {marketNews.headlines.slice(0, 5).map((h) => (
+                  <li key={h.url || h.title}>
+                    {h.url ? (
+                      <a
+                        href={h.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-bold text-teal hover:underline"
+                      >
+                        {h.title}
+                      </a>
+                    ) : (
+                      <span className="font-bold">{h.title}</span>
+                    )}
+                    <span className="tg-sub ml-2 text-xs">{h.source}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
         )}
 

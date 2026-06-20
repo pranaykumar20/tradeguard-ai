@@ -374,6 +374,28 @@ export async function getTickerNews(ticker: string): Promise<TickerAnalysis["new
   return fetchJson(`/api/intelligence/news/${encodeURIComponent(ticker)}`);
 }
 
+export type MarketNewsPulse = {
+  query: string;
+  sentiment_score?: number;
+  sentiment_label?: string;
+  headline_count: number;
+  headlines: {
+    title: string;
+    summary: string;
+    source: string;
+    published_at: string;
+    sentiment: number;
+    url?: string;
+  }[];
+  provider: string;
+  live_search: boolean;
+  hint?: string;
+};
+
+export async function getMarketNews(limit = 8): Promise<MarketNewsPulse> {
+  return fetchJson<MarketNewsPulse>(`/api/intelligence/market-news?limit=${limit}`);
+}
+
 export async function getJournalTrades(limit = 100): Promise<{ trades: PaperTrade[] }> {
   return fetchJson(`/api/journal?limit=${limit}`);
 }

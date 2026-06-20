@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     polygon_base_url: str = "https://api.polygon.io"
     fred_api_key: str = ""
 
+    tavily_api_key: str = ""
+    tavily_search_depth: str = "basic"  # basic | advanced
+    tavily_news_days: int = 3
+
     risk_max_trade_usd: float = 250.0
     risk_max_daily_loss_usd: float = 50.0
     risk_max_single_name_pct: float = 20.0
@@ -160,7 +164,7 @@ class Settings(BaseSettings):
     automation_max_daily_trades: int = 5
 
     # Phase 6 — intelligence
-    news_provider: str = "auto"  # auto | mock | polygon
+    news_provider: str = "auto"  # auto | mock | polygon | tavily
     sec_filings_enabled: bool = True
     regime_detection_enabled: bool = True
     ml_retrain_min_trades: int = 10
@@ -257,16 +261,20 @@ class Settings(BaseSettings):
         return bool(self.clerk_secret_key and self.clerk_jwt_issuer)
 
     @property
-    def use_polygon_news(self) -> bool:
-        if self.news_provider == "mock":
-            return False
-        if self.news_provider == "polygon":
-            return bool(self.polygon_api_key)
-        return bool(self.polygon_api_key)
-
-    @property
     def active_news_provider(self) -> str:
-        return "polygon" if self.use_polygon_news else "mock"
+        mode = self.news_provider.lower()
+        if mode == "mock":
+            return "mock"
+        if mode == "tavily" and self.tavily_api_key:
+            return "tavily"
+        if mode == "polygon" and self.polygon_api_key:
+            return "polygon"
+        if mode == "auto":
+            if self.tavily_api_key:
+                return "tavily"
+            if self.polygon_api_key:
+                return "polygon"
+        return "mock"
 
 
 settings = Settings()

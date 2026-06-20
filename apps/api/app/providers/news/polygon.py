@@ -7,14 +7,7 @@ from app.providers.news.base import NewsHeadline, NewsProvider
 from app.providers.news.mock import MockNewsProvider
 
 
-def _sentiment_from_text(text: str) -> float:
-    positive = {"beat", "raise", "growth", "surge", "record", "buy", "strong", "gain"}
-    negative = {"miss", "cut", "fall", "drop", "weak", "loss", "risk", "probe", "lawsuit"}
-    words = set(text.lower().split())
-    score = 50.0
-    score += 8 * len(words & positive)
-    score -= 8 * len(words & negative)
-    return max(5.0, min(95.0, score))
+from app.providers.news.sentiment import sentiment_from_text
 
 
 class PolygonNewsProvider(NewsProvider):
@@ -55,7 +48,7 @@ class PolygonNewsProvider(NewsProvider):
                         summary=desc[:280],
                         source=item.get("publisher", {}).get("name", "Polygon"),
                         published_at=item.get("published_utc", ""),
-                        sentiment=round(_sentiment_from_text(text), 1),
+                        sentiment=round(sentiment_from_text(text), 1),
                         url=item.get("article_url", ""),
                     )
                 )

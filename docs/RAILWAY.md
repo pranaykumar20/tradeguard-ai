@@ -92,6 +92,8 @@ Connect GitHub to Cursor (Settings → Integrations) so cloud agents can clone t
 |----------|---------|
 | `OPENAI_API_KEY` | RAG embeddings + fallback LLM |
 | `POLYGON_API_KEY` | Live market data |
+| `TAVILY_API_KEY` | Real-time market web search (news) |
+| `NEWS_PROVIDER` | `auto` (prefers Tavily) · `tavily` · `polygon` · `mock` |
 | `SLACK_WEBHOOK_URL` | Slack alerts |
 | `CLERK_SECRET_KEY` | API auth |
 | `CLERK_JWT_ISSUER` | Clerk JWT issuer URL |

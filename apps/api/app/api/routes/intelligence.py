@@ -19,6 +19,12 @@ async def ticker_news(ticker: str, limit: int = 8):
     return await news.get_ticker_news(ticker, limit=limit)
 
 
+@router.get("/market-news")
+async def market_news(limit: int = 8):
+    """Real-time broad market headlines via Tavily web search."""
+    return await news.get_market_pulse(limit=limit)
+
+
 @router.get("/filings/{ticker}")
 async def ticker_filings(ticker: str):
     return await filings.get_filings(ticker)
