@@ -106,58 +106,64 @@ class RAGService:
         doc_types: list[str] | None = None,
     ) -> list[RAGChunk]:
         top_k = top_k or settings.rag_top_k
-        await self.ensure_index()
+        try:
+            await self.ensure_index()
 
-        preferred_types = doc_types if doc_types is not None else infer_doc_types(query)
-        search_query = rewrite_query(query, ticker)
-        pool = settings.rag_candidate_pool
+            preferred_types = doc_types if doc_types is not None else infer_doc_types(query)
+            search_query = rewrite_query(query, ticker)
+            pool = settings.rag_candidate_pool
 
-        provider = get_embedding_provider()
-        query_vec = await provider.embed_text(search_query)
-        storage = await get_storage()
+            provider = get_embedding_provider()
+            query_vec = await provider.embed_text(search_query)
+            storage = await get_storage()
 
-        vector_hits = await self._vector_candidates(
-            query_vec,
-            pool=pool,
-            ticker=ticker,
-            doc_types=preferred_types,
-        )
+            vector_hits = await self._vector_candidates(
+                query_vec,
+                pool=pool,
+                ticker=ticker,
+                doc_types=preferred_types,
+            )
 
-        corpus = await storage.list_rag_documents(ticker=ticker, doc_types=preferred_types)
-        keyword_ranked = sorted(
-            corpus,
-            key=lambda doc: keyword_score(query, doc.get("content", "")),
-            reverse=True,
-        )[:pool]
+            corpus = await storage.list_rag_documents(ticker=ticker, doc_types=preferred_types)
+            keyword_ranked = sorted(
+                corpus,
+                key=lambda doc: keyword_score(query, doc.get("content", "")),
+                reverse=True,
+            )[:pool]
 
-        if not vector_hits and not keyword_ranked:
+            if not vector_hits and not keyword_ranked:
+                if doc_types is not None:
+                    return []
+                return self._keyword_fallback(query, top_k, ticker=ticker)
+
+            hybrid_scores = hybrid_merge(query, vector_hits, keyword_ranked)
+            candidate_map: dict[str, dict] = {}
+            for doc in vector_hits + keyword_ranked:
+                chunk_id = doc.get("chunk_id") or doc.get("id", "")
+                candidate_map.setdefault(chunk_id, doc)
+
+            ranked = rerank_candidates(
+                query,
+                list(candidate_map.values()),
+                hybrid_scores=hybrid_scores,
+                preferred_types=preferred_types,
+                top_k=top_k,
+            )
+
+            return [
+                RAGChunk(
+                    id=item.chunk_id,
+                    content=item.content,
+                    source=item.source,
+                    score=item.final_score,
+                )
+                for item in ranked
+            ]
+        except Exception as exc:
+            logger.warning("rag_search_failed", error=str(exc), query=query[:120], ticker=ticker)
             if doc_types is not None:
                 return []
             return self._keyword_fallback(query, top_k, ticker=ticker)
-
-        hybrid_scores = hybrid_merge(query, vector_hits, keyword_ranked)
-        candidate_map: dict[str, dict] = {}
-        for doc in vector_hits + keyword_ranked:
-            chunk_id = doc.get("chunk_id") or doc.get("id", "")
-            candidate_map.setdefault(chunk_id, doc)
-
-        ranked = rerank_candidates(
-            query,
-            list(candidate_map.values()),
-            hybrid_scores=hybrid_scores,
-            preferred_types=preferred_types,
-            top_k=top_k,
-        )
-
-        return [
-            RAGChunk(
-                id=item.chunk_id,
-                content=item.content,
-                source=item.source,
-                score=item.final_score,
-            )
-            for item in ranked
-        ]
 
     def _keyword_fallback(
         self, query: str, top_k: int, ticker: str | None = None

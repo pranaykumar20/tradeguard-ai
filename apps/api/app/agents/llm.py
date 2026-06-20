@@ -42,14 +42,36 @@ def _cursor_model() -> str:
 async def generate_reply(user_message: str, context: str) -> str | None:
     """Return LLM-generated reply, or None if no provider is configured."""
     if settings.llm_provider == "cursor" and settings.cursor_api_key:
-        return await _cursor_reply(user_message, context)
+        if settings.app_env == "production" and not settings.cursor_cloud_repo_url:
+            logger.warning(
+                "llm_cursor_skipped",
+                reason="CURSOR_CLOUD_REPO_URL required for Composer in production",
+            )
+            return None
+        try:
+            return await _cursor_reply(user_message, context)
+        except Exception as exc:
+            logger.warning("llm_cursor_failed", error=str(exc), model=_cursor_model())
+            return None
     if settings.llm_provider == "anthropic" and settings.anthropic_api_key:
-        return await _anthropic_reply(user_message, context)
+        try:
+            return await _anthropic_reply(user_message, context)
+        except Exception as exc:
+            logger.warning("llm_anthropic_failed", error=str(exc))
+            return None
     if settings.llm_provider == "openai" and settings.openai_api_key:
-        return await _openai_reply(user_message, context)
+        try:
+            return await _openai_reply(user_message, context)
+        except Exception as exc:
+            logger.warning("llm_openai_failed", error=str(exc))
+            return None
     # Legacy auto: any configured key when provider not explicitly cursor/openai/anthropic
     if settings.openai_api_key:
-        return await _openai_reply(user_message, context)
+        try:
+            return await _openai_reply(user_message, context)
+        except Exception as exc:
+            logger.warning("llm_openai_failed", error=str(exc))
+            return None
     return None
 
 

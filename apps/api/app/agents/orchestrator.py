@@ -31,7 +31,11 @@ class TradeGuardOrchestrator:
         self.rag_tools = RAGTools()
 
     async def _retrieve_rag(self, message: str, ticker: str | None) -> tuple[list, list[str]]:
-        return await self.rag_tools.retrieve_for_message(message, ticker=ticker)
+        try:
+            return await self.rag_tools.retrieve_for_message(message, ticker=ticker)
+        except Exception as exc:
+            logger.warning("rag_retrieval_failed", error=str(exc), ticker=ticker)
+            return [], []
 
     async def handle_message(self, message: str, session_id: str | None = None) -> dict:
         sid = session_id or str(uuid.uuid4())
@@ -230,6 +234,15 @@ class TradeGuardOrchestrator:
                 logger.info("llm_not_configured", provider=settings.llm_provider)
             else:
                 logger.warning("llm_empty_reply", provider=settings.llm_provider)
+            llm_hint = ""
+            if settings.llm_provider == "cursor" and not settings.cursor_cloud_repo_url:
+                llm_hint = (
+                    "\n\n*AI replies require `CURSOR_CLOUD_REPO_URL` on Railway, "
+                    "or set `LLM_PROVIDER=openai` with `OPENAI_API_KEY`.*"
+                )
+            elif settings.llm_provider == "openai" and not settings.openai_api_key:
+                llm_hint = "\n\n*Set `OPENAI_API_KEY` on Railway to enable AI replies.*"
+
             reply = (
                 f"**Portfolio Risk: {snapshot['risk_label']}** ({snapshot['risk_score']}/100)\n\n"
                 f"Account value: ${snapshot['portfolio_value']:,.2f} | "
@@ -238,6 +251,7 @@ class TradeGuardOrchestrator:
                 "Ask about a specific ticker (NVDA, MSFT, META, TSLA, QQQ, GBTC) "
                 "or say *'Should I buy more NVDA today?'* for a full risk analysis.\n\n"
                 "Phase 1 is **analysis-only** — no trades without your approval."
+                f"{llm_hint}"
             )
             if rag_chunks:
                 reply += f"\n\n{format_chunks_for_context(rag_chunks)}"

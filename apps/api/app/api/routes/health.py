@@ -48,6 +48,7 @@ async def readiness():
         "llm_configured": bool(
             settings.cursor_api_key or settings.openai_api_key or settings.anthropic_api_key
         ),
+        "cursor_cloud_repo_set": bool(settings.cursor_cloud_repo_url),
         "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
         "polygon_key_set": bool(settings.polygon_api_key),
