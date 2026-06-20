@@ -1,5 +1,6 @@
 """LLM service — explains analysis; risk engine verdict is always final."""
 
+import asyncio
 from pathlib import Path
 
 import structlog
@@ -7,6 +8,9 @@ import structlog
 from app.core.config import settings
 
 logger = structlog.get_logger()
+
+_cursor_client = None
+_cursor_client_lock = asyncio.Lock()
 
 SYSTEM_PROMPT = """You are TradeGuard AI, a risk-focused stock investing assistant.
 
@@ -37,6 +41,30 @@ def _cursor_model() -> str:
     if model.startswith("composer"):
         return model
     return "composer-2.5"
+
+
+async def close_cursor_client() -> None:
+    """Shut down the shared Cursor SDK bridge (app shutdown)."""
+    global _cursor_client
+    async with _cursor_client_lock:
+        if _cursor_client is not None:
+            await _cursor_client.aclose()
+            _cursor_client = None
+
+
+async def _get_cursor_client():
+    """Reuse one SDK bridge process — launching per chat adds ~10s overhead."""
+    global _cursor_client
+    async with _cursor_client_lock:
+        if _cursor_client is None:
+            from cursor_sdk import AsyncClient
+
+            _cursor_client = await AsyncClient.launch_bridge(
+                workspace=_cursor_workspace(),
+                timeout=60,
+                client_timeout=120.0,
+            )
+        return _cursor_client
 
 
 async def generate_reply(user_message: str, context: str) -> str | None:
@@ -76,19 +104,17 @@ async def generate_reply(user_message: str, context: str) -> str | None:
 
 
 async def _cursor_reply(user_message: str, context: str) -> str:
-    from cursor_sdk import AgentOptions, AsyncAgent, CloudAgentOptions, CloudRepository, LocalAgentOptions
+    from cursor_sdk import AgentOptions, AsyncAgent, CloudAgentOptions, CloudRepository
 
     options_kwargs: dict = {
         "model": _cursor_model(),
         "api_key": settings.cursor_api_key,
-        "mode": "plan",
+        "mode": "agent",
     }
     if settings.cursor_cloud_repo_url:
         options_kwargs["cloud"] = CloudAgentOptions(
             repos=[CloudRepository(url=settings.cursor_cloud_repo_url)],
         )
-    else:
-        options_kwargs["local"] = LocalAgentOptions(cwd=_cursor_workspace())
 
     prompt = (
         f"{SYSTEM_PROMPT}\n\n"
@@ -96,17 +122,18 @@ async def _cursor_reply(user_message: str, context: str) -> str:
         f"Context:\n{context}\n\nUser question:\n{user_message}"
     )
 
-    try:
-        result = await AsyncAgent.prompt(prompt, AgentOptions(**options_kwargs))
-        if result.status == "error":
-            raise RuntimeError(f"Cursor agent run failed: {result.id}")
-        text = (result.result or "").strip()
-        if not text:
-            raise RuntimeError("Cursor agent returned empty reply")
-        return text
-    except Exception as exc:
-        logger.warning("llm_cursor_failed", error=str(exc), model=_cursor_model())
-        raise
+    client = await _get_cursor_client()
+    result = await AsyncAgent.prompt(
+        prompt,
+        AgentOptions(**options_kwargs),
+        client=client,
+    )
+    if result.status == "error":
+        raise RuntimeError(f"Cursor agent run failed: {result.id}")
+    text = (result.result or "").strip()
+    if not text:
+        raise RuntimeError("Cursor agent returned empty reply")
+    return text
 
 
 async def _openai_reply(user_message: str, context: str) -> str:

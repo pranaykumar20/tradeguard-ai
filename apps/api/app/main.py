@@ -38,6 +38,9 @@ async def lifespan(app: FastAPI):
     await for_each_user(ValidationService().build_report)
     await for_each_user(run_strategy_eval_async)
     yield
+    from app.agents.llm import close_cursor_client
+
+    await close_cursor_client()
     await close_storage()
 
 
