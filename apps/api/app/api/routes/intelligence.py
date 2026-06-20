@@ -6,6 +6,7 @@ from app.services.ml_retrain import MLRetrainService
 from app.services.news import NewsService
 from app.services.regime import RegimeService
 from app.services.sec_filings import SecFilingService
+from app.rag.indexer import RAGIndexer
 
 router = APIRouter()
 news = NewsService()
@@ -52,6 +53,20 @@ async def ml_retrain():
     if result.get("status") == "skipped":
         raise HTTPException(status_code=400, detail=result)
     return result
+
+
+@router.post("/rag/refresh")
+async def refresh_rag_index():
+    """Re-index playbooks, SEC filings, news, and journal into pgvector."""
+    return await RAGIndexer().refresh_all()
+
+
+@router.post("/rag/journal/reindex")
+async def reindex_journal_rag():
+    """Re-index closed trades for the current user."""
+    from app.rag.journal_index import index_user_journal
+
+    return {"indexed": await index_user_journal()}
 
 
 @router.get("/overview/{ticker}")

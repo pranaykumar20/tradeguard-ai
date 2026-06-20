@@ -1,4 +1,4 @@
-"""RAG over financial knowledge — vector search with mock or OpenAI embeddings."""
+"""RAG over financial knowledge — hybrid vector + keyword retrieval."""
 
 from dataclasses import dataclass
 
@@ -7,67 +7,16 @@ import structlog
 from app.core.config import settings
 from app.db.storage import get_storage
 from app.providers.embeddings.factory import get_embedding_provider
+from app.rag.playbooks import playbook_fallback_chunks
+from app.rag.retrieval import (
+    hybrid_merge,
+    infer_doc_types,
+    keyword_score,
+    rerank_candidates,
+    rewrite_query,
+)
 
 logger = structlog.get_logger()
-
-PLAYBOOKS = [
-    {
-        "id": "risk-001",
-        "source": "risk-playbook.md",
-        "content": (
-            "Never add to a tech-heavy portfolio when QQQ is below its 50-day moving average "
-            "and VIX is rising. Reduce position size by 40% in high-volatility regimes."
-        ),
-    },
-    {
-        "id": "risk-002",
-        "source": "risk-playbook.md",
-        "content": (
-            "Single-name concentration above 20% requires explicit user approval. "
-            "NVDA, META, MSFT combined with QQQ creates hidden correlation risk."
-        ),
-    },
-    {
-        "id": "risk-003",
-        "source": "risk-playbook.md",
-        "content": (
-            "No market orders on volatile tickers. Use limit orders with defined stop loss. "
-            "Do not trade in the first 10 minutes after market open."
-        ),
-    },
-    {
-        "id": "risk-004",
-        "source": "risk-playbook.md",
-        "content": (
-            "Daily loss circuit breaker: halt all new trades when daily P&L exceeds the "
-            "configured loss limit. Review open positions before resuming."
-        ),
-    },
-    {
-        "id": "risk-005",
-        "source": "position-sizing.md",
-        "content": (
-            "Maximum trade size is $250 in Phase 1. Scale into positions over multiple days "
-            "rather than adding full size in one order when RSI is above 70."
-        ),
-    },
-    {
-        "id": "risk-006",
-        "source": "sector-rules.md",
-        "content": (
-            "Technology sector exposure above 30% triggers CAUTION on new tech buys. "
-            "Consider diversifying into healthcare or consumer names before adding NVDA or META."
-        ),
-    },
-    {
-        "id": "risk-007",
-        "source": "options-policy.md",
-        "content": (
-            "Options are blocked in Phase 1 without explicit manual approval. "
-            "Stocks and ETFs only on the allowed ticker list."
-        ),
-    },
-]
 
 
 @dataclass
@@ -77,84 +26,192 @@ class RAGChunk:
     source: str
     score: float
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "source": self.source,
+            "content": self.content,
+            "score": round(self.score, 4),
+        }
+
+
+def format_chunks_for_context(chunks: list[RAGChunk]) -> str:
+    if not chunks:
+        return ""
+    lines = ["Relevant knowledge:"]
+    for chunk in chunks:
+        lines.append(f"- [{chunk.source}] {chunk.content}")
+    return "\n".join(lines)
+
 
 class RAGService:
     _seeded = False
 
+    @classmethod
+    def mark_ready(cls) -> None:
+        cls._seeded = True
+
+    async def has_documents(self) -> bool:
+        storage = await get_storage()
+        results = await storage.search_rag([0.0] * settings.embedding_dimensions, top_k=1)
+        return bool(results)
+
     async def ensure_index(self) -> int:
-        if RAGService._seeded:
-            storage = await get_storage()
-            # cheap check — re-seed only if empty
-            results = await storage.search_rag([0.0] * settings.embedding_dimensions, top_k=1)
-            if results:
-                return 0
+        if self._seeded:
+            return 0
+        from app.rag.indexer import RAGIndexer
 
-        provider = get_embedding_provider()
+        result = await RAGIndexer().ensure_initialized()
+        return int(result.get("total", 0))
+
+    async def _vector_candidates(
+        self,
+        query_vec: list[float],
+        *,
+        pool: int,
+        ticker: str | None,
+        doc_types: list[str] | None,
+    ) -> list[dict]:
         storage = await get_storage()
-        texts = [p["content"] for p in PLAYBOOKS]
-        embeddings = await provider.embed_texts(texts)
-        docs = []
-        for playbook, emb in zip(PLAYBOOKS, embeddings, strict=True):
-            docs.append(
-                {
-                    "chunk_id": playbook["id"],
-                    "source": playbook["source"],
-                    "content": playbook["content"],
-                    "embedding": emb,
-                    "meta": {"keywords": playbook["id"]},
-                }
-            )
-        count = await storage.upsert_rag_documents(docs)
-        RAGService._seeded = True
-        logger.info("rag_index_ready", chunks=count, provider=provider.provider_name)
-        return count
+        if doc_types and settings.rag_type_routing_enabled:
+            merged: dict[str, dict] = {}
+            per_type = max(3, pool // len(doc_types))
+            for doc_type in doc_types:
+                hits = await storage.search_rag(
+                    query_vec,
+                    top_k=per_type,
+                    ticker=ticker,
+                    doc_types=[doc_type],
+                )
+                for hit in hits:
+                    chunk_id = hit.get("chunk_id") or hit.get("id", "")
+                    existing = merged.get(chunk_id)
+                    if not existing or hit.get("score", 0) > existing.get("score", 0):
+                        merged[chunk_id] = hit
+            ranked = sorted(merged.values(), key=lambda row: row.get("score", 0), reverse=True)
+            return ranked[:pool]
 
-    async def search(self, query: str, top_k: int = 3) -> list[RAGChunk]:
+        return await storage.search_rag(
+            query_vec,
+            top_k=pool,
+            ticker=ticker,
+            doc_types=doc_types,
+        )
+
+    async def search(
+        self,
+        query: str,
+        top_k: int | None = None,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[RAGChunk]:
+        top_k = top_k or settings.rag_top_k
         await self.ensure_index()
-        provider = get_embedding_provider()
-        query_vec = await provider.embed_text(query)
-        storage = await get_storage()
-        rows = await storage.search_rag(query_vec, top_k=top_k)
 
-        if not rows:
-            return self._keyword_fallback(query, top_k)
+        preferred_types = doc_types if doc_types is not None else infer_doc_types(query)
+        search_query = rewrite_query(query, ticker)
+        pool = settings.rag_candidate_pool
+
+        provider = get_embedding_provider()
+        query_vec = await provider.embed_text(search_query)
+        storage = await get_storage()
+
+        vector_hits = await self._vector_candidates(
+            query_vec,
+            pool=pool,
+            ticker=ticker,
+            doc_types=preferred_types,
+        )
+
+        corpus = await storage.list_rag_documents(ticker=ticker, doc_types=preferred_types)
+        keyword_ranked = sorted(
+            corpus,
+            key=lambda doc: keyword_score(query, doc.get("content", "")),
+            reverse=True,
+        )[:pool]
+
+        if not vector_hits and not keyword_ranked:
+            if doc_types is not None:
+                return []
+            return self._keyword_fallback(query, top_k, ticker=ticker)
+
+        hybrid_scores = hybrid_merge(query, vector_hits, keyword_ranked)
+        candidate_map: dict[str, dict] = {}
+        for doc in vector_hits + keyword_ranked:
+            chunk_id = doc.get("chunk_id") or doc.get("id", "")
+            candidate_map.setdefault(chunk_id, doc)
+
+        ranked = rerank_candidates(
+            query,
+            list(candidate_map.values()),
+            hybrid_scores=hybrid_scores,
+            preferred_types=preferred_types,
+            top_k=top_k,
+        )
 
         return [
             RAGChunk(
-                id=r.get("chunk_id") or r.get("id", ""),
-                content=r["content"],
-                source=r.get("source", ""),
-                score=float(r.get("score", 0)),
+                id=item.chunk_id,
+                content=item.content,
+                source=item.source,
+                score=item.final_score,
             )
-            for r in rows
+            for item in ranked
         ]
 
-    def _keyword_fallback(self, query: str, top_k: int) -> list[RAGChunk]:
+    def _keyword_fallback(
+        self, query: str, top_k: int, ticker: str | None = None
+    ) -> list[RAGChunk]:
         q = query.lower()
         scored = []
-        for doc in PLAYBOOKS:
-            hits = sum(1 for word in q.split() if len(word) > 3 and word in doc["content"].lower())
-            if hits:
+        for doc in playbook_fallback_chunks():
+            hits = sum(
+                1 for word in q.split() if len(word) > 3 and word in doc["content"].lower()
+            )
+            kw = keyword_score(query, doc["content"])
+            combined = float(hits) + kw
+            if combined > 0:
                 scored.append(
-                    RAGChunk(id=doc["id"], content=doc["content"], source=doc["source"], score=float(hits))
+                    RAGChunk(
+                        id=doc["chunk_id"],
+                        content=doc["content"],
+                        source=doc["source"],
+                        score=combined,
+                    )
                 )
-        scored.sort(key=lambda c: c.score, reverse=True)
+        if ticker:
+            ticker_lower = ticker.lower()
+            scored.sort(
+                key=lambda c: (
+                    ticker_lower in c.content.lower(),
+                    c.score,
+                ),
+                reverse=True,
+            )
+        else:
+            scored.sort(key=lambda c: c.score, reverse=True)
         return scored[:top_k]
 
     async def embed_and_store(self, documents: list[dict]) -> int:
+        if not documents:
+            return 0
         provider = get_embedding_provider()
         storage = await get_storage()
         texts = [d["content"] for d in documents]
         embeddings = await provider.embed_texts(texts)
         docs = []
         for doc, emb in zip(documents, embeddings, strict=True):
+            meta = dict(doc.get("meta") or {})
+            meta.setdefault("type", "document")
             docs.append(
                 {
                     "chunk_id": doc.get("chunk_id") or doc.get("id"),
                     "source": doc.get("source", "upload"),
                     "content": doc["content"],
                     "embedding": emb,
-                    "meta": doc.get("meta"),
+                    "meta": meta,
                 }
             )
-        return await storage.upsert_rag_documents(docs)
+        count = await storage.upsert_rag_documents(docs)
+        self.mark_ready()
+        return count

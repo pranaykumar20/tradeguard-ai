@@ -165,7 +165,24 @@ class Settings(BaseSettings):
 
     # Phase 6 — intelligence
     news_provider: str = "auto"  # auto | mock | polygon | tavily
+    rag_top_k: int = 3
+    rag_playbooks_dir: str = ""
+    rag_news_index_enabled: bool = True
+    rag_news_headline_limit: int = 5
+    rag_refresh_enabled: bool = True
+    rag_refresh_interval_minutes: int = 360
+    rag_hybrid_search_enabled: bool = True
+    rag_query_rewrite_enabled: bool = True
+    rag_type_routing_enabled: bool = True
+    rag_recency_decay_enabled: bool = True
+    rag_candidate_pool: int = 20
+    rag_rrf_k: int = 60
+    rag_recency_half_life_days: int = 30
+    rag_agentic_enabled: bool = True
+    rag_journal_index_enabled: bool = True
     sec_filings_enabled: bool = True
+    sec_edgar_enabled: bool = True
+    sec_edgar_user_agent: str = "TradeGuard-AI tradeguard@example.com"
     regime_detection_enabled: bool = True
     ml_retrain_min_trades: int = 10
 

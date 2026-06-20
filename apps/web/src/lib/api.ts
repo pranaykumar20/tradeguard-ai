@@ -16,6 +16,15 @@ export type ChatResponse = {
   warnings: string[];
   suggested_actions: string[];
   trade_preview?: TradePreview;
+  rag_sources?: RagSource[];
+  rag_tools?: string[];
+};
+
+export type RagSource = {
+  id: string;
+  source: string;
+  content: string;
+  score: number;
 };
 
 export type RiskSnapshot = {

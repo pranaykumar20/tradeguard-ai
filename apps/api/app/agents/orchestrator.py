@@ -7,7 +7,8 @@ import structlog
 
 from app.agents.llm import generate_reply
 from app.ml.scoring import score_ticker
-from app.rag.service import RAGService
+from app.rag.service import RAGService, format_chunks_for_context
+from app.rag.tools import RAGTools
 from app.risk.engine import RiskEngine, RiskVerdict
 from app.services.features import compute_ticker_features
 from app.services.news import NewsService
@@ -26,16 +27,22 @@ class TradeGuardOrchestrator:
     def __init__(self):
         self.risk = RiskEngine()
         self.rag = RAGService()
+        self.rag_tools = RAGTools()
+
+    async def _retrieve_rag(self, message: str, ticker: str | None) -> tuple[list, list[str]]:
+        return await self.rag_tools.retrieve_for_message(message, ticker=ticker)
 
     async def handle_message(self, message: str, session_id: str | None = None) -> dict:
         sid = session_id or str(uuid.uuid4())
         tickers = list(dict.fromkeys(m.upper() for m in TICKER_PATTERN.findall(message)))
 
-        rag_chunks = await self.rag.search(message)
+        rag_chunks, rag_tools_used = await self._retrieve_rag(
+            message, tickers[0] if tickers else None
+        )
         snapshot = await self.risk.portfolio_snapshot()
 
         if not tickers:
-            result = await self._general_response(sid, message, snapshot, rag_chunks)
+            result = await self._general_response(sid, message, snapshot, rag_chunks, rag_tools_used)
             storage = await get_storage()
             await storage.save_chat_message(sid, "user", message)
             await storage.save_chat_message(sid, "assistant", result["reply"], meta=result)
@@ -89,6 +96,8 @@ class TradeGuardOrchestrator:
             "risk_verdict": verdict.verdict,
             "warnings": verdict.warnings,
             "suggested_actions": suggested,
+            "rag_sources": [c.to_dict() for c in rag_chunks],
+            "rag_tools": rag_tools_used,
         }
         if trade_preview:
             result["trade_preview"] = trade_preview
@@ -159,7 +168,7 @@ class TradeGuardOrchestrator:
         if verdict.blocks:
             lines.append("Blocks: " + "; ".join(verdict.blocks))
         if rag_chunks:
-            lines.append("Playbook: " + rag_chunks[0].content)
+            lines.append(format_chunks_for_context(rag_chunks))
         if trade_preview:
             lines.append(
                 f"Trade preview: {trade_preview['side']} {trade_preview['quantity']} "
@@ -193,7 +202,9 @@ class TradeGuardOrchestrator:
             ticker, features, scores, verdict, snapshot, rag_chunks, trade_preview, news_data
         )
 
-    async def _general_response(self, sid: str, message: str, snapshot: dict, rag_chunks) -> dict:
+    async def _general_response(
+        self, sid: str, message: str, snapshot: dict, rag_chunks, rag_tools_used: list[str]
+    ) -> dict:
         context = (
             f"Portfolio risk: {snapshot['risk_label']} ({snapshot['risk_score']}/100)\n"
             f"Account value: ${snapshot['portfolio_value']:,.2f}\n"
@@ -201,7 +212,7 @@ class TradeGuardOrchestrator:
             f"Alerts: {[a['detail'] for a in snapshot.get('alerts', [])]}"
         )
         if rag_chunks:
-            context += f"\nPlaybook: {rag_chunks[0].content}"
+            context += f"\n{format_chunks_for_context(rag_chunks)}"
 
         reply = None
         try:
@@ -220,7 +231,7 @@ class TradeGuardOrchestrator:
                 "Phase 1 is **analysis-only** — no trades without your approval."
             )
             if rag_chunks:
-                reply += f"\n\n**Relevant playbook:** {rag_chunks[0].content}"
+                reply += f"\n\n{format_chunks_for_context(rag_chunks)}"
 
         warnings = [a["detail"] for a in snapshot.get("alerts", [])]
 
@@ -231,6 +242,8 @@ class TradeGuardOrchestrator:
             "risk_verdict": "CAUTION" if snapshot["risk_score"] >= 55 else "ALLOW",
             "warnings": warnings,
             "suggested_actions": ["Show Risk", "View Holdings"],
+            "rag_sources": [c.to_dict() for c in rag_chunks],
+            "rag_tools": rag_tools_used,
         }
 
     def _format_analysis(
@@ -290,7 +303,7 @@ class TradeGuardOrchestrator:
         )
 
         if rag_chunks:
-            lines.extend(["", f"**Playbook:** {rag_chunks[0].content}"])
+            lines.extend(["", format_chunks_for_context(rag_chunks)])
 
         return "\n".join(lines)
 

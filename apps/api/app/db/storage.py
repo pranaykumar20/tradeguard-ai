@@ -56,6 +56,36 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
+def _matches_doc_types(meta: dict | None, doc_types: list[str] | None) -> bool:
+    if not doc_types:
+        return True
+    doc_type = (meta or {}).get("type", "document")
+    return doc_type in doc_types
+
+
+def _rag_visible_to_user(meta: dict | None, user_id: str) -> bool:
+    meta = meta or {}
+    if meta.get("type") == "journal":
+        return meta.get("user_id") == user_id
+    return True
+
+
+def _rag_matches_ticker(meta: dict | None, ticker: str | None) -> bool:
+    if not ticker:
+        return True
+    meta = meta or {}
+    if meta.get("type") == "playbook":
+        return True
+    doc_ticker = meta.get("ticker")
+    if doc_ticker:
+        return str(doc_ticker).upper() == ticker.upper()
+    return True
+
+
+def _embedding_to_pgvector(embedding: list[float]) -> str:
+    return "[" + ",".join(str(x) for x in embedding) + "]"
+
+
 class StorageBackend(ABC):
     backend_name: str = "base"
 
@@ -102,7 +132,21 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    async def search_rag(self, query_embedding: list[float], top_k: int = 3) -> list[dict]:
+    async def search_rag(
+        self,
+        query_embedding: list[float],
+        top_k: int = 3,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def list_rag_documents(
+        self,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
         pass
 
     @abstractmethod
@@ -352,14 +396,45 @@ class MemoryStorageBackend(StorageBackend):
         self._persist()
         return len(docs)
 
-    async def search_rag(self, query_embedding: list[float], top_k: int = 3) -> list[dict]:
+    async def search_rag(
+        self,
+        query_embedding: list[float],
+        top_k: int = 3,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
+        fetch_k = top_k * 4 if doc_types else top_k
         scored = []
+        uid = _uid()
         for doc in self._data["rag_documents"]:
+            if not _rag_matches_ticker(doc.get("meta"), ticker):
+                continue
+            if not _matches_doc_types(doc.get("meta"), doc_types):
+                continue
+            if not _rag_visible_to_user(doc.get("meta"), uid):
+                continue
             emb = doc.get("embedding") or []
             score = _cosine(query_embedding, emb) if emb else 0.0
             scored.append({**doc, "score": score})
         scored.sort(key=lambda d: d["score"], reverse=True)
-        return scored[:top_k]
+        return scored[:fetch_k]
+
+    async def list_rag_documents(
+        self,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
+        rows = []
+        uid = _uid()
+        for doc in self._data["rag_documents"]:
+            if not _rag_matches_ticker(doc.get("meta"), ticker):
+                continue
+            if not _matches_doc_types(doc.get("meta"), doc_types):
+                continue
+            if not _rag_visible_to_user(doc.get("meta"), uid):
+                continue
+            rows.append(dict(doc))
+        return rows
 
     async def cache_features(self, ticker: str, features: dict, provider: str) -> None:
         self._data["feature_cache"][ticker.upper()] = {
@@ -611,6 +686,17 @@ class PostgresStorageBackend(StorageBackend):
         async with self._engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.run_sync(Base.metadata.create_all)
+            try:
+                await conn.execute(
+                    text(
+                        """
+                        CREATE INDEX IF NOT EXISTS rag_documents_embedding_hnsw_idx
+                        ON rag_documents USING hnsw (embedding vector_cosine_ops)
+                        """
+                    )
+                )
+            except Exception as exc:
+                logger.warning("rag_hnsw_index_skipped", error=str(exc))
         logger.info("storage_init", backend="postgres")
 
     async def close(self) -> None:
@@ -740,26 +826,79 @@ class PostgresStorageBackend(StorageBackend):
             await session.commit()
         return len(docs)
 
-    async def search_rag(self, query_embedding: list[float], top_k: int = 3) -> list[dict]:
+    async def search_rag(
+        self,
+        query_embedding: list[float],
+        top_k: int = 3,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
+        fetch_k = top_k * 4 if doc_types else top_k
+        vec = _embedding_to_pgvector(query_embedding)
+        ticker_filter = ticker.upper() if ticker else None
+        sql = text(
+            """
+            SELECT id, chunk_id, source, content, meta,
+                   1 - (embedding <=> CAST(:vec AS vector)) AS score
+            FROM rag_documents
+            WHERE (
+                :ticker IS NULL
+                OR meta->>'type' = 'playbook'
+                OR meta->>'ticker' = :ticker
+                OR meta->>'ticker' IS NULL
+            )
+            ORDER BY embedding <=> CAST(:vec AS vector)
+            LIMIT :top_k
+            """
+        )
+        async with self._session() as session:
+            result = await session.execute(
+                sql, {"vec": vec, "ticker": ticker_filter, "top_k": fetch_k}
+            )
+            rows = result.mappings().all()
+            filtered = [
+                {
+                    "id": r["id"],
+                    "chunk_id": r["chunk_id"],
+                    "source": r["source"],
+                    "content": r["content"],
+                    "meta": r["meta"],
+                    "score": float(r["score"] or 0),
+                }
+                for r in rows
+                if _matches_doc_types(r["meta"], doc_types)
+                and _rag_visible_to_user(r["meta"], _uid())
+            ]
+            return filtered[:top_k]
+
+    async def list_rag_documents(
+        self,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
         async with self._session() as session:
             result = await session.execute(select(RAGDocument))
             docs = result.scalars().all()
-            scored = []
+            rows = []
+            uid = _uid()
             for doc in docs:
-                emb = list(doc.embedding) if doc.embedding is not None else []
-                score = _cosine(query_embedding, emb) if emb else 0.0
-                scored.append(
+                meta = doc.meta or {}
+                if not _rag_matches_ticker(meta, ticker):
+                    continue
+                if not _matches_doc_types(meta, doc_types):
+                    continue
+                if not _rag_visible_to_user(meta, uid):
+                    continue
+                rows.append(
                     {
                         "id": doc.id,
                         "chunk_id": doc.chunk_id,
                         "source": doc.source,
                         "content": doc.content,
-                        "meta": doc.meta,
-                        "score": score,
+                        "meta": meta,
                     }
                 )
-            scored.sort(key=lambda d: d["score"], reverse=True)
-            return scored[:top_k]
+            return rows
 
     async def cache_features(self, ticker: str, features: dict, provider: str) -> None:
         async with self._session() as session:

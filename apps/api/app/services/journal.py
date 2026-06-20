@@ -37,6 +37,8 @@ class JournalService:
                 "pnl": None,
             }
         )
+        if trade.get("status") == "rejected":
+            await self._index_trade_postmortem(trade)
         return {"trade": trade, "preview": preview}
 
     async def fill_trade(self, trade_id: str, fill_price: float | None = None) -> dict:
@@ -55,7 +57,18 @@ class JournalService:
         )
         if not updated:
             raise ValueError("Trade not found")
+        await self._index_trade_postmortem(updated)
         return updated
+
+    async def _index_trade_postmortem(self, trade: dict) -> None:
+        if not settings.rag_journal_index_enabled:
+            return
+        from app.rag.journal_index import build_journal_document
+        from app.rag.service import RAGService
+
+        doc = build_journal_document(trade)
+        if doc:
+            await RAGService().embed_and_store([doc])
 
     async def list_trades(self, limit: int = 100) -> list[dict]:
         storage = await get_storage()

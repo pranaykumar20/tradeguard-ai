@@ -22,6 +22,8 @@ class ChatResponse(BaseModel):
     warnings: list[str] = []
     suggested_actions: list[str] = []
     trade_preview: dict | None = None
+    rag_sources: list[dict] = []
+    rag_tools: list[str] = []
 
 
 @router.post("", response_model=ChatResponse)

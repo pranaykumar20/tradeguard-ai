@@ -123,6 +123,23 @@ export function ChatPanel() {
                   ))}
                 </ul>
               )}
+              {msg.meta?.rag_sources && msg.meta.rag_sources.length > 0 && (
+                <details className="mb-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-bold text-teal">
+                    Sources ({msg.meta.rag_sources.length}
+                    {msg.meta.rag_tools?.length ? ` · ${msg.meta.rag_tools.join(", ")}` : ""})
+                  </summary>
+                  <ul className="mt-2 space-y-2">
+                    {msg.meta.rag_sources.map((source) => (
+                      <li key={source.id} className="text-xs text-muted">
+                        <span className="font-bold text-teal">{source.source}</span>
+                        <span className="ml-2 opacity-60">({source.score.toFixed(2)})</span>
+                        <p className="mt-1 leading-relaxed text-white/70">{source.content}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
               <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
             </div>
             {msg.meta?.suggested_actions?.length ? (
