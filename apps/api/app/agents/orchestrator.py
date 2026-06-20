@@ -6,6 +6,7 @@ import uuid
 import structlog
 
 from app.agents.llm import generate_reply
+from app.core.config import settings
 from app.ml.scoring import score_ticker
 from app.rag.service import RAGService, format_chunks_for_context
 from app.rag.tools import RAGTools

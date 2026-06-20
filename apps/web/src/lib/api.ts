@@ -1,4 +1,18 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+function resolveApiBase(): string {
+  const raw = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
+  if (!raw) return "";
+  const withoutTrailingSlash = raw.replace(/\/+$/, "");
+  if (
+    withoutTrailingSlash.startsWith("http://") ||
+    withoutTrailingSlash.startsWith("https://")
+  ) {
+    return withoutTrailingSlash;
+  }
+  return `https://${withoutTrailingSlash}`;
+}
+
+/** Empty string = same-origin; Next.js rewrites proxy to the FastAPI backend. */
+const API_BASE = resolveApiBase();
 
 type TokenGetter = () => Promise<string | null>;
 let authTokenGetter: TokenGetter | null = null;

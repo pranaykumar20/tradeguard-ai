@@ -13,10 +13,19 @@ function apiBaseUrl(): string {
 
 const nextConfig = {
   async rewrites() {
+    const api = apiBaseUrl();
     return [
       {
         source: "/health",
-        destination: `${apiBaseUrl()}/health`,
+        destination: `${api}/health`,
+      },
+      {
+        source: "/health/:path*",
+        destination: `${api}/health/:path*`,
+      },
+      {
+        source: "/api/:path*",
+        destination: `${api}/api/:path*`,
       },
     ];
   },
