@@ -117,7 +117,7 @@ async def test_agentic_tools_retrieve_filings_not_playbooks():
 
     tools = RAGTools()
     RAGService.mark_ready()
-    chunks, used = await tools.retrieve_for_message(
+    chunks, used, _, _ = await tools.retrieve_for_message(
         "NVDA 10-K risk factors export controls",
         ticker="NVDA",
         top_k=2,

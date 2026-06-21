@@ -150,6 +150,7 @@ def load_playbook_documents(playbooks_dir: Path | None = None) -> list[dict]:
                         "type": "playbook",
                         "title": title,
                         "file": md_file.name,
+                        "visibility": "global",
                     },
                 }
             )
@@ -168,7 +169,7 @@ def _builtin_playbook_documents() -> list[dict]:
             "chunk_id": doc["chunk_id"],
             "source": doc["source"],
             "content": doc["content"],
-            "meta": {"type": "playbook", "title": doc["chunk_id"], "file": doc["source"]},
+            "meta": {"type": "playbook", "title": doc["chunk_id"], "file": doc["source"], "visibility": "global"},
         }
         for doc in _BUILTIN_PLAYBOOKS
     ]

@@ -15,12 +15,12 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         self._fallback = MockEmbeddingProvider()
         self._client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str], *, model: str | None = None) -> list[list[float]]:
         if not self._client:
             return await self._fallback.embed_texts(texts)
         try:
             resp = await self._client.embeddings.create(
-                model=settings.embedding_model,
+                model=model or settings.embedding_model,
                 input=texts,
             )
             return [item.embedding for item in resp.data]

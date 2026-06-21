@@ -80,6 +80,23 @@ flowchart LR
 
 ---
 
+## Phase 5 — Ingestion pipeline & richer retrieval *(in progress)*
+
+**Goal:** Reliable ingestion with dedupe, type-specific chunking, partial reindex, and metadata enrichment.
+
+| Step | Description | Status |
+|------|-------------|--------|
+| **5.1** | Unified `RAGIngestPipeline` (normalize → chunk → hash dedupe → embed → upsert) | Done |
+| **5.2** | Type-specific chunkers (playbook, filing, news) | Done |
+| **5.3** | Partial reindex API `POST /rag/refresh/{source}` | Done |
+| **5.4** | pg_trgm + meta JSONB indexes | Done |
+| **5.5** | Per-doc-type embedding model + version in meta | Done |
+| **5.6** | Index analysis snapshots + ML runs (event hooks) | Done |
+| **5.7** | QueryPlan router + structured agent tools | Done |
+| **5.8** | Eval pipeline + citation grounding | Done |
+
+---
+
 ## Key files
 
 | Area | Path |

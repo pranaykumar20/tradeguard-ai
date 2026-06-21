@@ -1,0 +1,50 @@
+[
+  {
+    "id": "wash-sale-playbook",
+    "query": "What is the wash sale rule?",
+    "expected_tools": ["search_playbooks"],
+    "forbidden_tools": ["get_quote"]
+  },
+  {
+    "id": "filing-risk-factors",
+    "query": "What are NVDA 10-K risk factors?",
+    "tickers": ["NVDA"],
+    "expected_tools": ["search_filings"]
+  },
+  {
+    "id": "live-price",
+    "query": "What is NVDA trading at?",
+    "tickers": ["NVDA"],
+    "expected_tools": ["get_quote"],
+    "forbidden_tools": ["search_playbooks"]
+  },
+  {
+    "id": "trade-history",
+    "query": "Show my recent paper trades",
+    "expected_tools": ["query_trades"]
+  },
+  {
+    "id": "analysis-history",
+    "query": "What did we think about NVDA last month?",
+    "tickers": ["NVDA"],
+    "expected_tools": ["search_analysis_history"],
+    "freshness": "historical"
+  },
+  {
+    "id": "ml-lineage",
+    "query": "What is the model AUC after retrain?",
+    "expected_tools": ["search_ml_runs", "ml_status"]
+  },
+  {
+    "id": "buy-risk-check",
+    "query": "Should I buy more NVDA today?",
+    "tickers": ["NVDA"],
+    "expected_tools": ["check_risk_limits", "search_playbooks"]
+  },
+  {
+    "id": "journal-history",
+    "query": "What happened last time I traded NVDA?",
+    "tickers": ["NVDA"],
+    "expected_tools": ["search_journal"]
+  }
+]

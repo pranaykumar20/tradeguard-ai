@@ -8,7 +8,11 @@ import structlog
 
 from app.agents.intent import detect_intent
 from app.agents.llm import generate_reply, stream_reply
-from app.agents.llm_validator import inject_citation_markers, validate_llm_reply
+from app.agents.llm_validator import (
+    inject_citation_markers,
+    validate_grounded_reply,
+    validate_llm_reply,
+)
 from app.agents.response_builder import (
     attach_citations,
     build_citations,
@@ -39,18 +43,110 @@ TRADE_SIDE_PATTERN = re.compile(r"\b(buy|sell|purchase|add)\b", re.I)
 OPTION_PATTERN = re.compile(r"\b(option|call|put|options)\b", re.I)
 
 
+def _format_direct_context(direct_results: dict[str, dict]) -> str:
+    lines: list[str] = []
+    quote = direct_results.get("get_quote")
+    if quote and quote.get("last_price") is not None:
+        lines.append(
+            f"Live quote: {quote.get('ticker')} ${quote['last_price']:.2f} "
+            f"({quote.get('change_pct', 0):+.2f}%)"
+        )
+
+    portfolio = direct_results.get("portfolio_snapshot")
+    if portfolio:
+        lines.append(
+            f"Portfolio: ${portfolio.get('portfolio_value', 0):,.0f}, "
+            f"risk {portfolio.get('risk_score', 0)}/100 ({portfolio.get('risk_label', '')})"
+        )
+
+    trades = direct_results.get("query_trades", {}).get("trades", [])
+    if trades:
+        lines.append("Recent paper trades:")
+        for trade in trades[:5]:
+            pnl = trade.get("pnl")
+            pnl_str = f" PnL ${pnl:.2f}" if pnl is not None else ""
+            lines.append(
+                f"- {trade.get('ticker')} {trade.get('side')} {trade.get('status')} "
+                f"verdict {trade.get('verdict')}{pnl_str}"
+            )
+
+    analysis = direct_results.get("run_ticker_analysis")
+    if analysis:
+        lines.append(
+            f"Analysis API: {analysis.get('ticker')} score "
+            f"{analysis.get('composite_score_adjusted', analysis.get('composite_score')):.1f}/100 "
+            f"({analysis.get('setup_label')}), verdict {analysis.get('risk_verdict')}"
+        )
+
+    risk_preview = direct_results.get("check_risk_limits")
+    if risk_preview:
+        lines.append(
+            f"Risk preview: {risk_preview.get('side', 'buy')} "
+            f"{risk_preview.get('quantity', 1)} {risk_preview.get('ticker')} "
+            f"@ ${risk_preview.get('limit_price', 0):.2f} — {risk_preview.get('verdict')}"
+        )
+
+    ml = direct_results.get("ml_status")
+    if ml and ml.get("model_exists"):
+        lines.append(
+            f"ML model v{ml.get('version')} AUC {ml.get('auc')} "
+            f"({ml.get('model_type')}, {ml.get('journal_trades_used', 0)} journal trades)"
+        )
+
+    return "\n".join(lines)
+
+
 class TradeGuardOrchestrator:
     def __init__(self):
         self.risk = RiskEngine()
         self.rag = RAGService()
         self.rag_tools = RAGTools()
 
-    async def _retrieve_rag(self, message: str, ticker: str | None) -> tuple[list, list[str]]:
+    @staticmethod
+    def _build_retrieval_trace(
+        query_plan: dict,
+        rag_tools_used: list[str],
+        rag_chunks,
+        direct_results: dict[str, dict],
+    ) -> dict:
+        return {
+            "query_plan": query_plan,
+            "rag_tools": rag_tools_used,
+            "rag_chunk_ids": [c.id for c in rag_chunks],
+            "direct_calls": list(direct_results.keys()),
+        }
+
+    async def _load_chat_history(self, session_id: str) -> list[dict]:
+        if not session_id or settings.chat_history_turns <= 0:
+            return []
         try:
-            return await self.rag_tools.retrieve_for_message(message, ticker=ticker)
+            storage = await get_storage()
+            rows = await storage.get_chat_messages(session_id, limit=settings.chat_history_turns * 2)
+            return [{"role": r["role"], "content": r["content"]} for r in rows if r.get("content")]
         except Exception as exc:
-            logger.warning("rag_retrieval_failed", error=str(exc), ticker=ticker)
-            return [], []
+            logger.warning("chat_history_load_failed", error=str(exc))
+            return []
+
+    async def _execute_query_plan(
+        self,
+        message: str,
+        ticker: str | None,
+        trade_intent: dict | None = None,
+    ) -> tuple[list, list[str], dict[str, dict], dict]:
+        try:
+            chunks, tools, direct, plan = await self.rag_tools.retrieve_for_message(
+                message,
+                ticker=ticker,
+                trade_intent=trade_intent,
+            )
+            return chunks, tools, direct, plan.model_dump()
+        except Exception as exc:
+            logger.warning("query_plan_failed", error=str(exc), ticker=ticker)
+            return [], [], {}, {}
+
+    async def _retrieve_rag(self, message: str, ticker: str | None) -> tuple[list, list[str]]:
+        chunks, tools, _, _ = await self._execute_query_plan(message, ticker)
+        return chunks, tools
 
     async def _fetch_web_context(self, message: str, ticker: str | None) -> dict:
         try:
@@ -72,12 +168,22 @@ class TradeGuardOrchestrator:
 
     async def handle_message(self, message: str, session_id: str | None = None) -> dict:
         sid = session_id or str(uuid.uuid4())
+        history = await self._load_chat_history(sid) if session_id else []
         tickers = extract_tickers(message)
         primary_ticker = tickers[0] if tickers else None
 
-        rag_chunks, rag_tools_used = await self._retrieve_rag(message, primary_ticker)
+        trade_intent = (
+            self._parse_trade_intent(message, primary_ticker, {"last_price": 0})
+            if primary_ticker
+            else None
+        )
+        rag_chunks, rag_tools_used, direct_results, query_plan = await self._execute_query_plan(
+            message, primary_ticker, trade_intent=trade_intent
+        )
         web_data = await self._fetch_web_context(message, primary_ticker)
         quote_data, price_context = await self._fetch_price_context(message, primary_ticker)
+        if not quote_data and direct_results.get("get_quote"):
+            quote_data = direct_results["get_quote"]
         snapshot = await self.risk.portfolio_snapshot()
 
         if not tickers:
@@ -90,6 +196,12 @@ class TradeGuardOrchestrator:
                 web_data,
                 price_context,
                 quote_data,
+                direct_results=direct_results,
+                history=history,
+            )
+            result["query_plan"] = query_plan
+            result["retrieval_trace"] = self._build_retrieval_trace(
+                query_plan, rag_tools_used, rag_chunks, direct_results
             )
             result = self._enrich_result(result)
             storage = await get_storage()
@@ -126,12 +238,14 @@ class TradeGuardOrchestrator:
         trade_intent = self._parse_trade_intent(message, primary, features)
         if trade_intent:
             trade_preview = await self.risk.preview_trade(**trade_intent)
+        elif direct_results.get("check_risk_limits"):
+            trade_preview = direct_results["check_risk_limits"]
 
         all_warnings = list(verdict.warnings)
         all_blocks = list(verdict.blocks)
         if trade_preview:
-            all_warnings = list(dict.fromkeys(all_warnings + trade_preview["warnings"]))
-            all_blocks = list(dict.fromkeys(all_blocks + trade_preview["blocks"]))
+            all_warnings = list(dict.fromkeys(all_warnings + trade_preview.get("warnings", [])))
+            all_blocks = list(dict.fromkeys(all_blocks + trade_preview.get("blocks", [])))
 
         if all_blocks:
             final_verdict = "BLOCK"
@@ -152,6 +266,7 @@ class TradeGuardOrchestrator:
             trade_preview,
             news_data,
             price_context,
+            direct_results=direct_results,
         )
         reply, llm_summary = await self._compose_reply(
             message,
@@ -165,6 +280,7 @@ class TradeGuardOrchestrator:
             trade_preview,
             news_data,
             quote_data,
+            history=history,
         )
 
         decision = scores["label"]
@@ -212,6 +328,10 @@ class TradeGuardOrchestrator:
             "suggested_actions": suggested,
             "rag_sources": [c.to_dict() for c in rag_chunks],
             "rag_tools": rag_tools_used,
+            "query_plan": query_plan,
+            "retrieval_trace": self._build_retrieval_trace(
+                query_plan, rag_tools_used, rag_chunks, direct_results
+            ),
             "web_sources": news_data.get("headlines", [])[:5],
         }
         if quote_data and quote_data.get("last_price") is not None:
@@ -234,8 +354,9 @@ class TradeGuardOrchestrator:
     async def handle_message_stream(
         self, message: str, session_id: str | None = None
     ) -> AsyncIterator[dict]:
-        """SSE event generator: status → structured → tokens → done."""
+        """SSE event generator: status → retrieval → structured → tokens → done."""
         sid = session_id or str(uuid.uuid4())
+        history = await self._load_chat_history(sid) if session_id else []
 
         async def persist(result: dict) -> None:
             storage = await get_storage()
@@ -246,17 +367,45 @@ class TradeGuardOrchestrator:
         tickers = extract_tickers(message)
         primary_ticker = tickers[0] if tickers else None
 
-        yield {"type": "status", "message": "Loading portfolio risk…"}
-        rag_chunks, rag_tools_used = await self._retrieve_rag(message, primary_ticker)
+        yield {"type": "status", "message": "Routing query…"}
+        trade_intent = (
+            self._parse_trade_intent(message, primary_ticker, {"last_price": 0})
+            if primary_ticker
+            else None
+        )
+        rag_chunks, rag_tools_used, direct_results, query_plan = await self._execute_query_plan(
+            message, primary_ticker, trade_intent=trade_intent
+        )
+        yield {
+            "type": "retrieval",
+            "tools": rag_tools_used,
+            "chunk_count": len(rag_chunks),
+            "query_plan": query_plan,
+        }
 
         yield {"type": "status", "message": "Fetching market data…"}
         web_data = await self._fetch_web_context(message, primary_ticker)
         quote_data, price_context = await self._fetch_price_context(message, primary_ticker)
+        if not quote_data and direct_results.get("get_quote"):
+            quote_data = direct_results["get_quote"]
         snapshot = await self.risk.portfolio_snapshot()
 
         if not tickers:
             result = await self._general_response(
-                sid, message, snapshot, rag_chunks, rag_tools_used, web_data, price_context, quote_data
+                sid,
+                message,
+                snapshot,
+                rag_chunks,
+                rag_tools_used,
+                web_data,
+                price_context,
+                quote_data,
+                direct_results=direct_results,
+                history=history,
+            )
+            result["query_plan"] = query_plan
+            result["retrieval_trace"] = self._build_retrieval_trace(
+                query_plan, rag_tools_used, rag_chunks, direct_results
             )
             enriched = self._enrich_result(result)
             yield {"type": "structured", "data": enriched.get("structured")}
@@ -289,12 +438,14 @@ class TradeGuardOrchestrator:
         trade_intent = self._parse_trade_intent(message, primary, features)
         if trade_intent:
             trade_preview = await self.risk.preview_trade(**trade_intent)
+        elif direct_results.get("check_risk_limits"):
+            trade_preview = direct_results["check_risk_limits"]
 
         all_warnings = list(verdict.warnings)
         all_blocks = list(verdict.blocks)
         if trade_preview:
-            all_warnings = list(dict.fromkeys(all_warnings + trade_preview["warnings"]))
-            all_blocks = list(dict.fromkeys(all_blocks + trade_preview["blocks"]))
+            all_warnings = list(dict.fromkeys(all_warnings + trade_preview.get("warnings", [])))
+            all_blocks = list(dict.fromkeys(all_blocks + trade_preview.get("blocks", [])))
 
         if all_blocks:
             final_verdict = "BLOCK"
@@ -305,7 +456,16 @@ class TradeGuardOrchestrator:
 
         verdict = RiskVerdict(verdict=final_verdict, warnings=all_warnings, blocks=all_blocks)
         context = self._build_context(
-            primary, features, scores, verdict, snapshot, rag_chunks, trade_preview, news_data, price_context
+            primary,
+            features,
+            scores,
+            verdict,
+            snapshot,
+            rag_chunks,
+            trade_preview,
+            news_data,
+            price_context,
+            direct_results=direct_results,
         )
 
         decision = scores["label"]
@@ -351,6 +511,10 @@ class TradeGuardOrchestrator:
             "suggested_actions": self._suggested_actions(verdict, tickers, trade_preview, message),
             "rag_sources": [c.to_dict() for c in rag_chunks],
             "rag_tools": rag_tools_used,
+            "query_plan": query_plan,
+            "retrieval_trace": self._build_retrieval_trace(
+                query_plan, rag_tools_used, rag_chunks, direct_results
+            ),
             "web_sources": news_data.get("headlines", [])[:5],
         }
         if quote_dict:
@@ -370,7 +534,7 @@ class TradeGuardOrchestrator:
         yield {"type": "status", "message": "Composing analysis…"}
         narrative_parts: list[str] = []
         try:
-            async for token in stream_reply(message, context):
+            async for token in stream_reply(message, context, history):
                 narrative_parts.append(token)
                 yield {"type": "token", "content": token}
         except Exception:
@@ -413,6 +577,12 @@ class TradeGuardOrchestrator:
         if reply and not is_template:
             narrative = validate_llm_reply(reply)
             narrative = inject_citation_markers(narrative, len(citations))
+            grounding = validate_grounded_reply(
+                narrative,
+                risk_verdict=result.get("risk_verdict", "ALLOW"),
+                citation_count=len(citations),
+            )
+            result["grounding"] = grounding
             summary = extract_llm_summary(narrative)
             if summary:
                 structured["summary"] = summary
@@ -421,6 +591,13 @@ class TradeGuardOrchestrator:
             result["reply"] = narrative
         else:
             result["narrative"] = ""
+
+        if not result.get("retrieval_trace"):
+            result["retrieval_trace"] = {
+                "query_plan": result.get("query_plan"),
+                "rag_tools": result.get("rag_tools", []),
+                "rag_chunk_ids": [s.get("id") for s in result.get("rag_sources", [])],
+            }
 
         result["message_id"] = result.get("message_id") or str(uuid.uuid4())
         return result
@@ -461,8 +638,11 @@ class TradeGuardOrchestrator:
         trade_preview: dict | None,
         news_data: dict | None = None,
         price_context: str = "",
+        direct_results: dict[str, dict] | None = None,
     ) -> str:
-        lines = [
+        direct_results = direct_results or {}
+        authoritative = [
+            "[AUTHORITATIVE — DO NOT CONTRADICT]",
             f"Ticker: {ticker}",
             f"Last price: ${features['last_price']:.2f}",
             f"Risk verdict: {verdict.verdict} (FINAL — do not override)",
@@ -473,23 +653,30 @@ class TradeGuardOrchestrator:
             f"Portfolio risk: {snapshot['risk_label']} ({snapshot['risk_score']}/100)",
             f"Tech exposure: {snapshot['sector_exposure'].get('Technology', 0):.1f}%",
         ]
+        direct_block = _format_direct_context(direct_results)
+        if direct_block:
+            authoritative.append(direct_block)
         if price_context:
-            lines.append(price_context)
-        if news_data and news_data.get("headlines"):
-            lines.append(format_news_for_context(news_data))
+            authoritative.append(price_context)
         if verdict.warnings:
-            lines.append("Warnings: " + "; ".join(verdict.warnings))
+            authoritative.append("Warnings: " + "; ".join(verdict.warnings))
         if verdict.blocks:
-            lines.append("Blocks: " + "; ".join(verdict.blocks))
-        if rag_chunks:
-            lines.append(format_chunks_for_context(rag_chunks))
+            authoritative.append("Blocks: " + "; ".join(verdict.blocks))
         if trade_preview:
-            lines.append(
-                f"Trade preview: {trade_preview['side']} {trade_preview['quantity']} "
-                f"{ticker} @ ${trade_preview['limit_price']:.2f} "
-                f"(${trade_preview['order_value']:.2f}) — {trade_preview['verdict']}"
+            authoritative.append(
+                f"Trade preview: {trade_preview.get('side')} {trade_preview.get('quantity')} "
+                f"{ticker} @ ${trade_preview.get('limit_price', 0):.2f} "
+                f"(${trade_preview.get('order_value', 0):.2f}) — {trade_preview.get('verdict')}"
             )
-        return "\n".join(lines)
+
+        sections = ["\n".join(authoritative)]
+        if rag_chunks:
+            sections.append(
+                "[RETRIEVED KNOWLEDGE — cite with [n]]\n" + format_chunks_for_context(rag_chunks)
+            )
+        if news_data and news_data.get("headlines"):
+            sections.append("[LIVE WEB]\n" + format_news_for_context(news_data))
+        return "\n\n".join(sections)
 
     async def _compose_reply(
         self,
@@ -504,10 +691,11 @@ class TradeGuardOrchestrator:
         trade_preview: dict | None,
         news_data: dict | None = None,
         quote_data: dict | None = None,
+        history: list[dict] | None = None,
     ) -> tuple[str, str | None]:
         llm_summary = None
         try:
-            llm_reply = await generate_reply(message, context)
+            llm_reply = await generate_reply(message, context, history)
             if llm_reply:
                 llm_summary = extract_llm_summary(llm_reply)
                 return self._prepend_price_fact(llm_reply.strip(), message, quote_data), llm_summary
@@ -549,24 +737,31 @@ class TradeGuardOrchestrator:
         web_data: dict,
         price_context: str = "",
         quote_data: dict | None = None,
+        direct_results: dict[str, dict] | None = None,
+        history: list[dict] | None = None,
     ) -> dict:
+        direct_results = direct_results or {}
         context = (
+            "[AUTHORITATIVE — DO NOT CONTRADICT]\n"
             f"Portfolio risk: {snapshot['risk_label']} ({snapshot['risk_score']}/100)\n"
             f"Account value: ${snapshot['portfolio_value']:,.2f}\n"
             f"Tech exposure: {snapshot['sector_exposure'].get('Technology', 0):.1f}%\n"
             f"Alerts: {[a['detail'] for a in snapshot.get('alerts', [])]}"
         )
+        direct_block = _format_direct_context(direct_results)
+        if direct_block:
+            context += f"\n{direct_block}"
         if price_context:
             context += f"\n{price_context}"
         web_context = format_news_for_context(web_data)
         if web_context:
-            context += f"\n{web_context}"
+            context += f"\n[LIVE WEB]\n{web_context}"
         if rag_chunks:
-            context += f"\n{format_chunks_for_context(rag_chunks)}"
+            context += f"\n[RETRIEVED KNOWLEDGE — cite with [n]]\n{format_chunks_for_context(rag_chunks)}"
 
         reply = None
         try:
-            reply = await generate_reply(message, context)
+            reply = await generate_reply(message, context, history)
         except Exception as exc:
             logger.warning("llm_fallback_to_template", error=str(exc))
 

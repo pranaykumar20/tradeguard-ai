@@ -185,6 +185,16 @@ class Settings(BaseSettings):
     rag_recency_half_life_days: int = 30
     rag_agentic_enabled: bool = True
     rag_journal_index_enabled: bool = True
+    rag_content_hash_enabled: bool = True
+    rag_partial_refresh_enabled: bool = True
+    rag_embedding_version: int = 1
+    rag_embedding_model_filing: str = ""
+    rag_temporal_filter_enabled: bool = True
+    rag_router_enabled: bool = True
+    chat_history_turns: int = 6
+    rag_eval_enabled: bool = True
+    rag_eval_interval_hours: int = 24
+    rag_embedding_migration_enabled: bool = True
     sec_filings_enabled: bool = True
     sec_edgar_enabled: bool = True
     sec_edgar_user_agent: str = "TradeGuard-AI tradeguard@example.com"

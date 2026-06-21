@@ -40,5 +40,19 @@ try:
         def refresh_rag_index_task() -> dict:
             return refresh_rag_index()
 
+        celery_app.conf.beat_schedule.setdefault(
+            "rag-eval-nightly",
+            {
+                "task": "app.tasks.rag.run_rag_eval_task",
+                "schedule": settings.rag_eval_interval_hours * 3600.0,
+            },
+        )
+
+        @celery_app.task(name="app.tasks.rag.run_rag_eval_task")
+        def run_rag_eval_task() -> dict:
+            from app.rag.eval.runner import run_rag_eval
+
+            return asyncio.run(run_rag_eval())
+
 except Exception:
     pass

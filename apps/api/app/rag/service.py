@@ -9,6 +9,7 @@ from app.db.storage import get_storage
 from app.providers.embeddings.factory import get_embedding_provider
 from app.rag.playbooks import playbook_fallback_chunks
 from app.rag.retrieval import (
+    apply_temporal_filter,
     hybrid_merge,
     infer_doc_types,
     keyword_score,
@@ -25,6 +26,7 @@ class RAGChunk:
     content: str
     source: str
     score: float
+    doc_type: str = "document"
 
     def to_dict(self) -> dict:
         return {
@@ -32,6 +34,7 @@ class RAGChunk:
             "source": self.source,
             "content": self.content,
             "score": round(self.score, 4),
+            "doc_type": self.doc_type,
         }
 
 
@@ -125,6 +128,8 @@ class RAGService:
             )
 
             corpus = await storage.list_rag_documents(ticker=ticker, doc_types=preferred_types)
+            corpus = apply_temporal_filter(corpus, query)
+            vector_hits = apply_temporal_filter(vector_hits, query)
             keyword_ranked = sorted(
                 corpus,
                 key=lambda doc: keyword_score(query, doc.get("content", "")),
@@ -156,6 +161,7 @@ class RAGService:
                     content=item.content,
                     source=item.source,
                     score=item.final_score,
+                    doc_type=(item.meta or {}).get("type", "document"),
                 )
                 for item in ranked
             ]
@@ -183,6 +189,7 @@ class RAGService:
                         content=doc["content"],
                         source=doc["source"],
                         score=combined,
+                        doc_type=(doc.get("meta") or {}).get("type", "playbook"),
                     )
                 )
         if ticker:
@@ -198,15 +205,12 @@ class RAGService:
             scored.sort(key=lambda c: c.score, reverse=True)
         return scored[:top_k]
 
-    async def embed_and_store(self, documents: list[dict]) -> int:
+    async def store_documents(self, documents: list[dict]) -> int:
         if not documents:
             return 0
-        provider = get_embedding_provider()
         storage = await get_storage()
-        texts = [d["content"] for d in documents]
-        embeddings = await provider.embed_texts(texts)
         docs = []
-        for doc, emb in zip(documents, embeddings, strict=True):
+        for doc in documents:
             meta = dict(doc.get("meta") or {})
             meta.setdefault("type", "document")
             docs.append(
@@ -214,10 +218,16 @@ class RAGService:
                     "chunk_id": doc.get("chunk_id") or doc.get("id"),
                     "source": doc.get("source", "upload"),
                     "content": doc["content"],
-                    "embedding": emb,
+                    "embedding": doc["embedding"],
                     "meta": meta,
                 }
             )
         count = await storage.upsert_rag_documents(docs)
         self.mark_ready()
         return count
+
+    async def embed_and_store(self, documents: list[dict]) -> int:
+        from app.rag.pipeline import RAGIngestPipeline
+
+        result = await RAGIngestPipeline(self).ingest(documents)
+        return int(result["stored"])

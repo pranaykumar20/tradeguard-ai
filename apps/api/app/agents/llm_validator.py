@@ -58,3 +58,65 @@ def inject_citation_markers(narrative: str, citation_count: int) -> str:
         markers = " ".join(f"[{i}]" for i in range(1, min(citation_count, 3) + 1))
         return f"{narrative.rstrip()} {markers}"
     return narrative
+
+
+_CITATION_MARKER = re.compile(r"\[(\d+)\]")
+
+
+def validate_citation_markers(
+    narrative: str,
+    *,
+    max_citation_id: int,
+) -> dict:
+    """Ensure [n] markers reference valid citation ids (1..max_citation_id)."""
+    if not narrative or max_citation_id <= 0:
+        return {"valid": True, "invalid_markers": [], "markers_found": []}
+
+    markers = [int(m) for m in _CITATION_MARKER.findall(narrative)]
+    invalid = [m for m in markers if m < 1 or m > max_citation_id]
+    return {
+        "valid": len(invalid) == 0,
+        "invalid_markers": invalid,
+        "markers_found": markers,
+    }
+
+
+_BLOCK_CONTRADICTIONS = (
+    re.compile(r"\b(safe to buy|go ahead and buy|recommend buying|you should buy)\b", re.I),
+    re.compile(r"\b(allow(ed)? to (buy|trade|proceed))\b", re.I),
+)
+
+
+def validate_authority_compliance(narrative: str, risk_verdict: str) -> dict:
+    """Flag narratives that contradict a BLOCK/CAUTION risk verdict."""
+    if not narrative or not risk_verdict:
+        return {"compliant": True, "violations": []}
+
+    if risk_verdict not in {"BLOCK", "CAUTION"}:
+        return {"compliant": True, "violations": []}
+
+    violations: list[str] = []
+    for pattern in _BLOCK_CONTRADICTIONS:
+        if pattern.search(narrative):
+            violations.append(pattern.pattern)
+
+    if risk_verdict == "BLOCK" and re.search(r"\b(allow|approved)\b", narrative, re.I):
+        violations.append("allow_while_blocked")
+
+    return {"compliant": len(violations) == 0, "violations": violations}
+
+
+def validate_grounded_reply(
+    narrative: str,
+    *,
+    risk_verdict: str,
+    citation_count: int,
+) -> dict:
+    """Combined citation + authority validation for chat responses."""
+    citations = validate_citation_markers(narrative, max_citation_id=citation_count)
+    authority = validate_authority_compliance(narrative, risk_verdict)
+    return {
+        "citations": citations,
+        "authority": authority,
+        "grounded": citations["valid"] and authority["compliant"],
+    }

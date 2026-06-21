@@ -78,7 +78,9 @@ async def _get_cursor_client():
         return _cursor_client
 
 
-async def generate_reply(user_message: str, context: str) -> str | None:
+async def generate_reply(
+    user_message: str, context: str, history: list[dict] | None = None
+) -> str | None:
     """Return LLM-generated reply, or None if no provider is configured."""
     if settings.llm_provider == "cursor" and settings.cursor_api_key:
         if settings.app_env == "production" and not settings.cursor_cloud_repo_url:
@@ -88,37 +90,37 @@ async def generate_reply(user_message: str, context: str) -> str | None:
             )
             return None
         try:
-            return await _cursor_reply(user_message, context)
+            return await _cursor_reply(user_message, context, history)
         except Exception as exc:
             logger.warning("llm_cursor_failed", error=str(exc), model=_cursor_model())
             return None
     if settings.llm_provider == "anthropic" and settings.anthropic_api_key:
         try:
-            return await _anthropic_reply(user_message, context)
+            return await _anthropic_reply(user_message, context, history)
         except Exception as exc:
             logger.warning("llm_anthropic_failed", error=str(exc))
             return None
     if settings.llm_provider == "openai" and settings.openai_api_key:
         try:
-            return await _openai_reply(user_message, context)
+            return await _openai_reply(user_message, context, history)
         except Exception as exc:
             logger.warning("llm_openai_failed", error=str(exc))
             return None
     # Legacy auto: any configured key when provider not explicitly cursor/openai/anthropic
     if settings.openai_api_key:
         try:
-            return await _openai_reply(user_message, context)
+            return await _openai_reply(user_message, context, history)
         except Exception as exc:
             logger.warning("llm_openai_failed", error=str(exc))
             return None
     return None
 
 
-async def stream_reply(user_message: str, context: str):
+async def stream_reply(user_message: str, context: str, history: list[dict] | None = None):
     """Yield narrative tokens. Uses native OpenAI streaming when available."""
     if settings.llm_provider == "openai" and settings.openai_api_key:
         try:
-            async for token in _openai_stream(user_message, context):
+            async for token in _openai_stream(user_message, context, history):
                 yield token
             return
         except Exception as exc:
@@ -126,29 +128,42 @@ async def stream_reply(user_message: str, context: str):
 
     if settings.openai_api_key and settings.llm_provider != "anthropic":
         try:
-            async for token in _openai_stream(user_message, context):
+            async for token in _openai_stream(user_message, context, history):
                 yield token
             return
         except Exception as exc:
             logger.warning("llm_openai_stream_failed", error=str(exc))
 
-    reply = await generate_reply(user_message, context)
+    reply = await generate_reply(user_message, context, history)
     if not reply:
         return
     for word in reply.split():
         yield word + " "
 
 
-async def _openai_stream(user_message: str, context: str):
+def _history_messages(history: list[dict] | None) -> list[dict]:
+    if not history:
+        return []
+    cap = max(0, settings.chat_history_turns * 2)
+    trimmed = history[-cap:] if cap else []
+    return [{"role": m["role"], "content": m["content"]} for m in trimmed if m.get("content")]
+
+
+async def _openai_stream(user_message: str, context: str, history: list[dict] | None = None):
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=settings.openai_api_key)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(_history_messages(history))
+    messages.append(
+        {
+            "role": "user",
+            "content": f"Context:\n{context}\n\nUser question:\n{user_message}",
+        }
+    )
     stream = await client.chat.completions.create(
         model=settings.llm_model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{context}\n\nUser question:\n{user_message}"},
-        ],
+        messages=messages,
         max_tokens=400,
         temperature=0.3,
         stream=True,
@@ -159,7 +174,7 @@ async def _openai_stream(user_message: str, context: str):
             yield delta
 
 
-async def _cursor_reply(user_message: str, context: str) -> str:
+async def _cursor_reply(user_message: str, context: str, history: list[dict] | None = None) -> str:
     from cursor_sdk import AgentOptions, AsyncAgent, CloudAgentOptions, CloudRepository
 
     options_kwargs: dict = {
@@ -172,10 +187,16 @@ async def _cursor_reply(user_message: str, context: str) -> str:
             repos=[CloudRepository(url=settings.cursor_cloud_repo_url)],
         )
 
+    history_block = ""
+    for msg in _history_messages(history):
+        history_block += f"\n{msg['role'].title()}: {msg['content'][:400]}"
+
     prompt = (
         f"{SYSTEM_PROMPT}\n\n"
         "Respond in GitHub-flavored markdown only. Do not edit files, run shell commands, or use tools.\n\n"
-        f"Context:\n{context}\n\nUser question:\n{user_message}"
+        f"Context:\n{context}\n\n"
+        f"{('Recent conversation:' + history_block) if history_block else ''}\n\n"
+        f"User question:\n{user_message}"
     )
 
     client = await _get_cursor_client()
@@ -192,20 +213,22 @@ async def _cursor_reply(user_message: str, context: str) -> str:
     return text
 
 
-async def _openai_reply(user_message: str, context: str) -> str:
+async def _openai_reply(user_message: str, context: str, history: list[dict] | None = None) -> str:
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=settings.openai_api_key)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(_history_messages(history))
+    messages.append(
+        {
+            "role": "user",
+            "content": f"Context:\n{context}\n\nUser question:\n{user_message}",
+        }
+    )
     try:
         response = await client.chat.completions.create(
             model=settings.llm_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": f"Context:\n{context}\n\nUser question:\n{user_message}",
-                },
-            ],
+            messages=messages,
             max_tokens=800,
             temperature=0.3,
         )
@@ -215,10 +238,19 @@ async def _openai_reply(user_message: str, context: str) -> str:
         raise
 
 
-async def _anthropic_reply(user_message: str, context: str) -> str:
+async def _anthropic_reply(user_message: str, context: str, history: list[dict] | None = None) -> str:
     import httpx
 
     model = settings.llm_model if "claude" in settings.llm_model else "claude-3-5-haiku-20241022"
+    anthropic_messages = []
+    for msg in _history_messages(history):
+        anthropic_messages.append({"role": msg["role"], "content": msg["content"]})
+    anthropic_messages.append(
+        {
+            "role": "user",
+            "content": f"Context:\n{context}\n\nUser question:\n{user_message}",
+        }
+    )
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -232,12 +264,7 @@ async def _anthropic_reply(user_message: str, context: str) -> str:
                     "model": model,
                     "max_tokens": 800,
                     "system": SYSTEM_PROMPT,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": f"Context:\n{context}\n\nUser question:\n{user_message}",
-                        }
-                    ],
+                    "messages": anthropic_messages,
                 },
             )
             response.raise_for_status()

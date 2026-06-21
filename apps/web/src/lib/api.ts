@@ -87,6 +87,12 @@ export type ChatResponse = {
 
 export type ChatStreamEvent =
   | { type: "status"; message: string }
+  | {
+      type: "retrieval";
+      tools: string[];
+      chunk_count: number;
+      query_plan?: Record<string, unknown>;
+    }
   | { type: "structured"; data: StructuredReply | null }
   | { type: "token"; content: string }
   | { type: "done"; data: ChatResponse };
@@ -107,6 +113,7 @@ export type RagSource = {
   source: string;
   content: string;
   score: number;
+  doc_type?: string;
 };
 
 export type RiskSnapshot = {
@@ -608,6 +615,60 @@ export async function rollbackMLModel(version: number): Promise<{
   reason?: string;
 }> {
   return fetchJson(`/api/intelligence/ml/rollback/${version}`, { method: "POST" });
+}
+
+export type RagEvalCase = {
+  id: string;
+  query: string;
+  passed: boolean;
+  plan_tools: string[];
+  freshness: string;
+  expected_tools: string[];
+};
+
+export type RagEvalReport = {
+  status: string;
+  ran_at?: string;
+  elapsed_ms?: number;
+  cases_total?: number;
+  cases_passed?: number;
+  tool_selection_accuracy_pct?: number;
+  acl_leak_rate_pct?: number;
+  acl_check?: { passed: boolean; leak_detected: boolean };
+  cases?: RagEvalCase[];
+  message?: string;
+};
+
+export type RagStatus = {
+  documents_total: number;
+  documents_by_type: Record<string, number>;
+  embedding_version: number;
+  router_enabled: boolean;
+  eval_enabled: boolean;
+  last_eval: RagEvalReport | null;
+};
+
+export async function getRagStatus(): Promise<RagStatus> {
+  return fetchJson<RagStatus>("/api/intelligence/rag/status");
+}
+
+export async function getRagEvalReport(): Promise<RagEvalReport> {
+  return fetchJson<RagEvalReport>("/api/intelligence/rag/eval");
+}
+
+export async function runRagEval(): Promise<RagEvalReport> {
+  return fetchJson<RagEvalReport>("/api/intelligence/rag/eval/run", { method: "POST" });
+}
+
+export async function refreshRagIndex(source?: string): Promise<Record<string, unknown>> {
+  const path = source
+    ? `/api/intelligence/rag/refresh/${source}`
+    : "/api/intelligence/rag/refresh";
+  return fetchJson(path, { method: "POST" });
+}
+
+export async function migrateRagEmbeddings(): Promise<Record<string, unknown>> {
+  return fetchJson("/api/intelligence/rag/migrate/embeddings", { method: "POST" });
 }
 
 export async function getTickerNews(ticker: string): Promise<TickerAnalysis["news"]> {

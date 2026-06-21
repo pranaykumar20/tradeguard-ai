@@ -65,6 +65,16 @@ def _matches_doc_types(meta: dict | None, doc_types: list[str] | None) -> bool:
 
 def _rag_visible_to_user(meta: dict | None, user_id: str) -> bool:
     meta = meta or {}
+    visibility = meta.get("visibility")
+    if visibility == "global" or visibility is None:
+        if meta.get("type") == "journal" and meta.get("user_id"):
+            return meta.get("user_id") == user_id
+        return True
+    if visibility == "user":
+        return meta.get("user_id") == user_id
+    if visibility == "tenant":
+        doc_tenant = meta.get("tenant_id", user_id)
+        return doc_tenant == user_id
     if meta.get("type") == "journal":
         return meta.get("user_id") == user_id
     return True
@@ -147,6 +157,14 @@ class StorageBackend(ABC):
         ticker: str | None = None,
         doc_types: list[str] | None = None,
     ) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def get_rag_content_hashes(self, chunk_ids: list[str]) -> dict[str, str]:
+        pass
+
+    @abstractmethod
+    async def list_rag_documents_raw(self) -> list[dict]:
         pass
 
     @abstractmethod
@@ -453,6 +471,23 @@ class MemoryStorageBackend(StorageBackend):
                 continue
             rows.append(dict(doc))
         return rows
+
+    async def get_rag_content_hashes(self, chunk_ids: list[str]) -> dict[str, str]:
+        if not chunk_ids:
+            return {}
+        wanted = set(chunk_ids)
+        hashes: dict[str, str] = {}
+        for doc in self._data["rag_documents"]:
+            chunk_id = doc.get("chunk_id")
+            if chunk_id not in wanted:
+                continue
+            digest = (doc.get("meta") or {}).get("content_hash")
+            if digest:
+                hashes[chunk_id] = digest
+        return hashes
+
+    async def list_rag_documents_raw(self) -> list[dict]:
+        return [dict(doc) for doc in self._data["rag_documents"]]
 
     async def cache_features(self, ticker: str, features: dict, provider: str) -> None:
         self._data["feature_cache"][ticker.upper()] = {
@@ -770,6 +805,7 @@ class PostgresStorageBackend(StorageBackend):
     async def init(self) -> None:
         async with self._engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             await conn.run_sync(Base.metadata.create_all)
             try:
                 await conn.execute(
@@ -782,6 +818,26 @@ class PostgresStorageBackend(StorageBackend):
                 )
             except Exception as exc:
                 logger.warning("rag_hnsw_index_skipped", error=str(exc))
+            try:
+                await conn.execute(
+                    text(
+                        """
+                        CREATE INDEX IF NOT EXISTS rag_documents_content_trgm_idx
+                        ON rag_documents USING gin (content gin_trgm_ops)
+                        """
+                    )
+                )
+            except Exception as exc:
+                logger.warning("rag_trgm_index_skipped", error=str(exc))
+            for index_sql in (
+                "CREATE INDEX IF NOT EXISTS rag_documents_meta_type_idx ON rag_documents ((meta->>'type'))",
+                "CREATE INDEX IF NOT EXISTS rag_documents_meta_ticker_idx ON rag_documents ((meta->>'ticker'))",
+                "CREATE INDEX IF NOT EXISTS rag_documents_meta_user_idx ON rag_documents ((meta->>'user_id'))",
+            ):
+                try:
+                    await conn.execute(text(index_sql))
+                except Exception as exc:
+                    logger.warning("rag_meta_index_skipped", sql=index_sql, error=str(exc))
         logger.info("storage_init", backend="postgres")
 
     async def close(self) -> None:
@@ -984,6 +1040,37 @@ class PostgresStorageBackend(StorageBackend):
                     }
                 )
             return rows
+
+    async def get_rag_content_hashes(self, chunk_ids: list[str]) -> dict[str, str]:
+        if not chunk_ids:
+            return {}
+        async with self._session() as session:
+            result = await session.execute(
+                select(RAGDocument.chunk_id, RAGDocument.meta).where(
+                    RAGDocument.chunk_id.in_(chunk_ids)
+                )
+            )
+            hashes: dict[str, str] = {}
+            for chunk_id, meta in result.all():
+                digest = (meta or {}).get("content_hash")
+                if digest:
+                    hashes[chunk_id] = digest
+            return hashes
+
+    async def list_rag_documents_raw(self) -> list[dict]:
+        async with self._session() as session:
+            result = await session.execute(select(RAGDocument))
+            docs = result.scalars().all()
+            return [
+                {
+                    "id": doc.id,
+                    "chunk_id": doc.chunk_id,
+                    "source": doc.source,
+                    "content": doc.content,
+                    "meta": doc.meta or {},
+                }
+                for doc in docs
+            ]
 
     async def cache_features(self, ticker: str, features: dict, provider: str) -> None:
         async with self._session() as session:

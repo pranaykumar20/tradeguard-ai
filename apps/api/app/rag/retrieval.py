@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.config import settings
 
@@ -271,11 +271,29 @@ def recency_multiplier(meta: dict | None, half_life_days: int | None = None) -> 
 
     meta = meta or {}
     doc_type = meta.get("type")
-    if doc_type not in {"news", "filing"}:
+    if doc_type == "playbook":
         return 1.0
 
-    half_life = half_life_days or settings.rag_recency_half_life_days
-    date_str = meta.get("published_at") or meta.get("filed_at")
+    half_life_by_type = {
+        "news": 7,
+        "filing": 180,
+        "journal": 365,
+        "analysis_snapshot": 30,
+        "ml_run": 90,
+    }
+    if doc_type not in half_life_by_type:
+        return 1.0
+
+    half_life = half_life_days or half_life_by_type.get(
+        doc_type, settings.rag_recency_half_life_days
+    )
+    date_str = (
+        meta.get("published_at")
+        or meta.get("filed_at")
+        or meta.get("closed_at")
+        or meta.get("as_of")
+        or meta.get("trained_at")
+    )
     parsed = _parse_date(date_str)
     if not parsed:
         return 1.0
@@ -284,6 +302,54 @@ def recency_multiplier(meta: dict | None, half_life_days: int | None = None) -> 
     if age_days <= 1:
         return 1.25
     return max(0.75, math.pow(0.5, age_days / half_life))
+
+
+_TEMPORAL_RULES: list[tuple[re.Pattern[str], timedelta | None]] = [
+    (re.compile(r"\blast\s+week\b", re.I), timedelta(days=7)),
+    (re.compile(r"\blast\s+month\b", re.I), timedelta(days=30)),
+    (re.compile(r"\blast\s+quarter\b", re.I), timedelta(days=90)),
+    (re.compile(r"\blast\s+year\b", re.I), timedelta(days=365)),
+    (re.compile(r"\blast\s+(\d+)\s+days?\b", re.I), None),
+]
+
+
+def parse_temporal_window(query: str) -> tuple[datetime, datetime] | None:
+    if not settings.rag_temporal_filter_enabled:
+        return None
+
+    now = datetime.now(timezone.utc)
+    for pattern, delta in _TEMPORAL_RULES:
+        match = pattern.search(query)
+        if not match:
+            continue
+        if delta is None:
+            days = int(match.group(1))
+            return now - timedelta(days=days), now
+        return now - delta, now
+    return None
+
+
+def _doc_timestamp(meta: dict | None) -> datetime | None:
+    meta = meta or {}
+    for key in ("as_of", "published_at", "closed_at", "filed_at", "trained_at"):
+        parsed = _parse_date(meta.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def apply_temporal_filter(documents: list[dict], query: str) -> list[dict]:
+    window = parse_temporal_window(query)
+    if not window:
+        return documents
+
+    start, end = window
+    filtered = []
+    for doc in documents:
+        ts = _doc_timestamp(doc.get("meta"))
+        if ts and start <= ts <= end:
+            filtered.append(doc)
+    return filtered if filtered else documents
 
 
 @dataclass

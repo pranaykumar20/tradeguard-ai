@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { StructuredChatReply } from "@/components/chat/StructuredChatReply";
 import { CitationList, NarrativeWithCitations } from "@/components/chat/NarrativeWithCitations";
+import { GroundingBar, SourceDrawer, ToolTracePills } from "@/components/chat/RagUi";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { Btn, Card } from "@/components/ui/Card";
 import { EXAMPLE_STRUCTURED } from "@/lib/chat-types";
@@ -23,6 +24,8 @@ type Message = {
   streaming?: boolean;
   streamingStatus?: string;
   streamingNarrative?: string;
+  streamingTools?: string[];
+  streamingChunkCount?: number;
 };
 
 const STARTER = "Should I buy more NVDA today?";
@@ -196,6 +199,19 @@ function AssistantBody({
   if (msg.meta?.structured) {
     return (
       <>
+        <GroundingBar
+          sourceCount={msg.meta.rag_sources?.length ?? 0}
+          toolCount={msg.meta.rag_tools?.length ?? 0}
+          verdict={msg.meta.risk_verdict}
+        />
+        {(msg.streamingTools?.length || msg.meta.rag_tools?.length) ? (
+          <ToolTracePills
+            tools={msg.streamingTools ?? msg.meta.rag_tools ?? []}
+            chunkCount={
+              msg.streamingChunkCount ?? msg.meta.rag_sources?.length
+            }
+          />
+        ) : null}
         <StructuredChatReply structured={msg.meta.structured} onFollowUp={onFollowUp} />
         <div className="mt-3">
           <NarrativeWithCitations
@@ -204,7 +220,9 @@ function AssistantBody({
             streaming={msg.streaming && !!msg.streamingNarrative}
           />
         </div>
-        {!msg.streaming && citations && citations.length > 0 ? null : null}
+        {!msg.streaming && msg.meta.rag_sources && msg.meta.rag_sources.length > 0 ? (
+          <SourceDrawer sources={msg.meta.rag_sources} />
+        ) : null}
         {msg.meta.structured.follow_up && !msg.streaming ? (
           <FollowUpChips text={msg.meta.structured.follow_up} onSelect={onFollowUp} />
         ) : null}
@@ -302,6 +320,14 @@ export function ChatPanel() {
         onEvent: (event: ChatStreamEvent) => {
           if (event.type === "status") {
             updateStreamingMessage((msg) => ({ ...msg, streamingStatus: event.message }));
+          }
+          if (event.type === "retrieval") {
+            updateStreamingMessage((msg) => ({
+              ...msg,
+              streamingTools: event.tools,
+              streamingChunkCount: event.chunk_count,
+              streamingStatus: `Retrieved ${event.chunk_count} chunks…`,
+            }));
           }
           if (event.type === "structured" && event.data) {
             updateStreamingMessage((msg) => ({

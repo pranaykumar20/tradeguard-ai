@@ -1,5 +1,7 @@
 """Ticker analysis endpoints."""
 
+import asyncio
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -53,7 +55,7 @@ async def analyze_ticker(ticker: str):
     )
     news = await news_service.get_ticker_news(ticker)
     filing_data = await filing_service.get_filings(ticker)
-    return TickerAnalysis(
+    result = TickerAnalysis(
         ticker=ticker,
         scores=scores["components"],
         composite_score=scores["composite"],
@@ -66,6 +68,17 @@ async def analyze_ticker(ticker: str):
         filings=filing_data,
         regime=regime_data,
     )
+    asyncio.create_task(_index_analysis_snapshot(result))
+    return result
+
+
+async def _index_analysis_snapshot(result: TickerAnalysis) -> None:
+    try:
+        from app.rag.indexers.analysis_snapshot import index_analysis_snapshot
+
+        await index_analysis_snapshot(result.model_dump())
+    except Exception:
+        pass
 
 
 @router.get("/compare")

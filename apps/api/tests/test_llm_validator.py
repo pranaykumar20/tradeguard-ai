@@ -32,3 +32,10 @@ def test_inject_citation_markers():
     text = inject_citation_markers("Recent headlines suggest caution.", 2)
     assert "[1]" in text
     assert "[2]" in text
+
+
+def test_validate_citation_markers_invalid():
+    from app.agents.llm_validator import validate_citation_markers
+
+    result = validate_citation_markers("Source [5] says so.", max_citation_id=2)
+    assert result["valid"] is False

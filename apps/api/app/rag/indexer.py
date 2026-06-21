@@ -12,7 +12,9 @@ from app.core.user_context import for_each_user
 from app.db.storage import get_storage
 from app.providers.news.factory import get_news_provider
 from app.providers.sec.edgar import EdgarClient, mock_filing_documents
+from app.rag.pipeline import RAGIngestPipeline
 from app.rag.playbooks import load_playbook_documents
+from app.rag.schemas import RAG_SOURCES
 from app.rag.service import RAGService
 from app.risk.rules import default_rules
 
@@ -23,7 +25,7 @@ _RAG_INIT_KEY = "rag_initialized"
 
 class RAGIndexer:
     def __init__(self):
-        self.rag = RAGService()
+        self.pipeline = RAGIngestPipeline()
         self.edgar = EdgarClient()
 
     @property
@@ -34,9 +36,9 @@ class RAGIndexer:
         documents = load_playbook_documents()
         if not documents:
             return 0
-        count = await self.rag.embed_and_store(documents)
-        logger.info("rag_playbooks_indexed", chunks=count)
-        return count
+        result = await self.pipeline.ingest(documents)
+        logger.info("rag_playbooks_indexed", **result)
+        return int(result["stored"])
 
     async def index_filings(self) -> int:
         if not settings.sec_filings_enabled:
@@ -51,9 +53,9 @@ class RAGIndexer:
 
         if not documents:
             return 0
-        count = await self.rag.embed_and_store(documents)
-        logger.info("rag_filings_indexed", chunks=count, tickers=len(self.tickers))
-        return count
+        result = await self.pipeline.ingest(documents)
+        logger.info("rag_filings_indexed", stored=result["stored"], tickers=len(self.tickers))
+        return int(result["stored"])
 
     async def index_news(self) -> int:
         if not settings.rag_news_index_enabled:
@@ -68,29 +70,30 @@ class RAGIndexer:
                 if not title:
                     continue
                 digest = hashlib.sha1(title.encode("utf-8")).hexdigest()[:10]
-                content = title
-                if headline.url:
-                    content = f"{title} (source: {headline.source})"
                 documents.append(
                     {
                         "chunk_id": f"news-{ticker.lower()}-{digest}",
                         "source": f"{ticker} news — {headline.source}",
-                        "content": content,
+                        "content": title,
                         "meta": {
                             "type": "news",
                             "ticker": ticker,
+                            "title": title,
+                            "summary": (headline.summary or "").strip(),
+                            "source_name": headline.source,
                             "published_at": headline.published_at,
                             "sentiment": headline.sentiment,
                             "url": headline.url,
+                            "visibility": "global",
                         },
                     }
                 )
 
         if not documents:
             return 0
-        count = await self.rag.embed_and_store(documents)
-        logger.info("rag_news_indexed", chunks=count, tickers=len(self.tickers))
-        return count
+        result = await self.pipeline.ingest(documents)
+        logger.info("rag_news_indexed", stored=result["stored"], tickers=len(self.tickers))
+        return int(result["stored"])
 
     async def index_journal(self) -> int:
         if not settings.rag_journal_index_enabled:
@@ -101,6 +104,22 @@ class RAGIndexer:
         total = sum(counts)
         logger.info("rag_journal_indexed", chunks=total, users=len(counts))
         return total
+
+    async def refresh_source(self, source: str) -> dict:
+        if source == "all":
+            return await self.refresh_all()
+        if source not in RAG_SOURCES:
+            raise ValueError(f"Unknown RAG source: {source}")
+
+        handlers = {
+            "playbooks": self.index_playbooks,
+            "filings": self.index_filings,
+            "news": self.index_news,
+            "journal": self.index_journal,
+        }
+        count = await handlers[source]()
+        RAGService.mark_ready()
+        return {"source": source, "stored": count}
 
     async def refresh_all(self) -> dict:
         playbooks = await self.index_playbooks()

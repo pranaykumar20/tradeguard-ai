@@ -54,6 +54,7 @@ def build_journal_document(trade: dict, user_id: str | None = None) -> dict | No
             "verdict": verdict,
             "pnl": pnl,
             "closed_at": closed_at,
+            "visibility": "user",
         },
     }
 

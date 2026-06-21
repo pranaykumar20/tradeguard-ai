@@ -1,5 +1,7 @@
 """Retrain direction model from market data and journal snapshots."""
 
+import asyncio
+
 import structlog
 
 import pandas as pd
@@ -96,6 +98,7 @@ class MLRetrainService:
                 model_type=result.get("model_type"),
                 journal_trades_used=journal_count,
             )
+            asyncio.create_task(_index_ml_run(result))
         else:
             logger.info("ml_retrain_skipped", reason=result.get("reason"), new_auc=result.get("new_auc"))
         result["journal_trades_used"] = journal_count
@@ -209,3 +212,12 @@ class MLRetrainService:
 
         sample = np.array([2.0, 1.0, 55.0, 0.1, 2.5, 1.1, 50.0, 1.0, 2.0, 0.0])
         return predict_direction_prob(sample)
+
+
+async def _index_ml_run(result: dict) -> None:
+    try:
+        from app.rag.indexers.ml_run import index_ml_run
+
+        await index_ml_run(result)
+    except Exception:
+        pass
