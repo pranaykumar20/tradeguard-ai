@@ -15,7 +15,8 @@ COPY alembic.ini .
 COPY scripts ./scripts
 
 ENV PYTHONUNBUFFERED=1 \
-    APP_ENV=production
+    APP_ENV=production \
+    PYTHONPATH=/app
 
 EXPOSE 8000
 

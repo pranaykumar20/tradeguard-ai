@@ -4,6 +4,13 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+# Pre-deploy runs `python scripts/migrate.py`, so sys.path[0] is /app/scripts.
+# Ensure /app is importable so `from app...` works (same layout as uvicorn).
+APP_ROOT = Path(__file__).resolve().parents[1]
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 from alembic.config import Config
 from alembic import command
