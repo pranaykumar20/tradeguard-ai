@@ -1,10 +1,11 @@
 """Chat orchestration — LLM brain with tool routing."""
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, Literal
+from pydantic import BaseModel, Field
 
 from app.agents.orchestrator import TradeGuardOrchestrator
 from app.db.storage import get_storage
