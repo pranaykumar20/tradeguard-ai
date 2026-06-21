@@ -394,8 +394,10 @@ export function ChatPanel() {
       <div className="tg-scroll flex flex-1 flex-col gap-3.5 overflow-y-auto">
         {messages.length === 0 && (
           <div className="space-y-3.5">
-            <div className="tg-bubble-user">Should I buy more NVDA today?</div>
-            <div className="tg-bubble-ai relative max-w-[92%]">
+            <div className="flex flex-col items-end">
+              <div className="tg-bubble-user">Should I buy more NVDA today?</div>
+            </div>
+            <div className="tg-bubble-ai">
               <AssistantHeader verdict="CAUTION" decision="Watch — manual review required" disableActions />
               <StructuredChatReply structured={EXAMPLE_STRUCTURED} onFollowUp={submit} />
               <div className="mt-3">
@@ -411,7 +413,7 @@ export function ChatPanel() {
 
         {messages.map((msg, i) => (
           <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
-            <div className={`relative ${msg.role === "user" ? "tg-bubble-user" : "tg-bubble-ai max-w-[92%]"}`}>
+            <div className={`relative ${msg.role === "user" ? "tg-bubble-user" : "tg-bubble-ai"}`}>
               {msg.role === "assistant" && (
                 <AssistantHeader
                   verdict={msg.meta?.risk_verdict}
@@ -459,7 +461,7 @@ export function ChatPanel() {
       </div>
 
       <form
-        className="flex gap-2.5"
+        className="flex items-center gap-2.5"
         onSubmit={(e) => {
           e.preventDefault();
           submit(input);
@@ -472,7 +474,7 @@ export function ChatPanel() {
           className="tg-input"
           disabled={loading}
         />
-        <Btn type="submit" disabled={loading}>
+        <Btn type="submit" className="shrink-0" disabled={loading}>
           Send
         </Btn>
       </form>

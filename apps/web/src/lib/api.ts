@@ -26,6 +26,48 @@ export function setAuthTokenGetter(getter: TokenGetter | null) {
   authTokenGetter = getter;
 }
 
+function getDemoUserEmail(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|;\s*)tg_demo_email=([^;]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...extra,
+  };
+  const demoEmail = getDemoUserEmail();
+  if (demoEmail) {
+    headers["X-Demo-User-Email"] = demoEmail;
+  }
+  return headers;
+}
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  clerk_id: string | null;
+  display_name: string;
+  is_authenticated: boolean;
+  role: string;
+  permissions: string[];
+  is_active: boolean;
+};
+
+export type AuthMeResponse = {
+  auth_enabled: boolean;
+  user: AuthUser;
+};
+
+export type AdminUser = AuthUser & {
+  custom_permissions: string[] | null;
+  effective_permissions: string[];
+  role_label: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type ChatResponse = {
   session_id: string;
   message_id?: string | null;
@@ -316,10 +358,7 @@ export type ExecutionPreview = {
 };
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(init?.headers as Record<string, string> | undefined),
-  };
+  const headers = authHeaders(init?.headers as Record<string, string> | undefined);
   if (authTokenGetter) {
     const token = await authTokenGetter();
     if (token) {
@@ -334,6 +373,33 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`API ${path} failed: ${res.status}`);
   }
   return res.json() as Promise<T>;
+}
+
+export async function getAuthMe(): Promise<AuthMeResponse> {
+  return fetchJson<AuthMeResponse>("/api/auth/me");
+}
+
+export async function listAdminUsers(): Promise<{ users: AdminUser[] }> {
+  return fetchJson<{ users: AdminUser[] }>("/api/admin/users");
+}
+
+export async function updateAdminUser(
+  userId: string,
+  body: Partial<Pick<AdminUser, "role" | "is_active" | "display_name">> & {
+    permissions?: string[] | null;
+  },
+): Promise<AdminUser> {
+  return fetchJson<AdminUser>(`/api/admin/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getAdminPermissionCatalog(): Promise<{
+  permissions: string[];
+  roles: { id: string; label: string; permissions: string[] }[];
+}> {
+  return fetchJson("/api/admin/permissions");
 }
 
 export async function sendChat(message: string, sessionId?: string): Promise<ChatResponse> {
@@ -351,7 +417,7 @@ export async function sendChatStream(
     signal?: AbortSignal;
   },
 ): Promise<ChatResponse> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers = authHeaders();
   if (authTokenGetter) {
     const token = await authTokenGetter();
     if (token) headers.Authorization = `Bearer ${token}`;

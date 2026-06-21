@@ -108,11 +108,11 @@ export function PushInboxBell() {
   if (!enabled) return null;
 
   return (
-    <div className="relative mb-3">
+    <div className="relative">
       <button
         type="button"
         onClick={() => void handleOpen()}
-        className="flex w-full items-center justify-between rounded-[14px] border border-card-border px-3 py-2 text-xs font-bold transition hover:border-teal/40"
+        className="flex w-full items-center justify-between rounded-[14px] border border-card-border px-3 py-2.5 text-xs font-bold transition hover:border-teal/40"
         aria-label="Notifications"
       >
         <span>Alerts</span>

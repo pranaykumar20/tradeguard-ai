@@ -79,12 +79,14 @@ export function PageHeader({
   subtitle?: string;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h1 className="text-[32px] font-extrabold tracking-tight">{title}</h1>
-        {subtitle && <p className="mt-1.5 text-[15px] text-muted">{subtitle}</p>}
+    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <h1 className="text-2xl font-extrabold tracking-tight md:text-[32px]">{title}</h1>
+        {subtitle && <p className="mt-1.5 text-sm text-muted md:text-[15px]">{subtitle}</p>}
       </div>
-      <div className="tg-pill">Informational only · Not financial advice</div>
+      <div className="tg-pill shrink-0 self-start whitespace-normal text-center sm:max-w-[220px] sm:text-left">
+        Informational only · Not financial advice
+      </div>
     </div>
   );
 }

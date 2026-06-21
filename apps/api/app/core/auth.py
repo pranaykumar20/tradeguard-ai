@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import jwt
 import structlog
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
+from app.core.permissions import (
+    ALL_PERMISSIONS,
+    effective_permissions,
+    is_platform_admin,
+)
 
 logger = structlog.get_logger()
 _bearer = HTTPBearer(auto_error=False)
@@ -26,6 +31,40 @@ class CurrentUser:
     clerk_id: str | None
     email: str
     is_authenticated: bool
+    role: str = "user"
+    permissions: list[str] = field(default_factory=list)
+    is_active: bool = True
+    display_name: str = ""
+
+
+def _demo_admin_user() -> CurrentUser:
+    """Full access when auth is disabled (local dev / demo mode)."""
+    return CurrentUser(
+        id=DEFAULT_USER_ID,
+        clerk_id=None,
+        email=DEFAULT_USER_EMAIL,
+        is_authenticated=False,
+        role="platform_admin",
+        permissions=list(ALL_PERMISSIONS),
+        is_active=True,
+        display_name="Demo User",
+    )
+
+
+def user_record_to_current(record: dict, *, is_authenticated: bool = True) -> CurrentUser:
+    role = record.get("role", "user")
+    custom = record.get("permissions")
+    perms = effective_permissions(role, custom)
+    return CurrentUser(
+        id=record["id"],
+        clerk_id=record.get("clerk_id"),
+        email=record.get("email") or "",
+        is_authenticated=is_authenticated,
+        role=role,
+        permissions=perms,
+        is_active=bool(record.get("is_active", True)),
+        display_name=record.get("display_name") or "",
+    )
 
 
 def _jwks_url() -> str:
@@ -84,12 +123,12 @@ async def sync_user_from_clerk(clerk_id: str, email: str, display_name: str) -> 
             email=email,
             display_name=display_name,
         )
-        return CurrentUser(
-            id=user["id"],
-            clerk_id=clerk_id,
-            email=user.get("email") or email,
-            is_authenticated=True,
-        )
+        current = user_record_to_current(user, is_authenticated=True)
+        if not current.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+        return current
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.warning("auth_user_sync_failed", error=str(exc))
         return CurrentUser(
@@ -97,12 +136,44 @@ async def sync_user_from_clerk(clerk_id: str, email: str, display_name: str) -> 
             clerk_id=clerk_id,
             email=email,
             is_authenticated=True,
+            role="user",
+            permissions=effective_permissions("user", None),
+            is_active=True,
+            display_name=display_name,
         )
+
+
+async def _resolve_demo_user_from_request(request: Request) -> CurrentUser | None:
+    """Resolve a demo user by email header when auth is disabled."""
+    if settings.auth_enabled:
+        return None
+    email = (request.headers.get("x-demo-user-email") or "").strip().lower()
+    if not email:
+        return None
+    from app.db.storage import get_storage
+
+    storage = await get_storage()
+    users = await storage.list_users()
+    for record in users:
+        if (record.get("email") or "").lower() == email:
+            current = user_record_to_current(record, is_authenticated=True)
+            if not current.is_active:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+            return current
+    record = await storage.get_or_create_user(
+        clerk_id=f"demo:{email}",
+        email=email,
+        display_name=email.split("@")[0],
+    )
+    return user_record_to_current(record, is_authenticated=True)
 
 
 async def resolve_request_user_id(request) -> str:
     """Resolve storage user id from Authorization header (middleware)."""
     if not settings.auth_enabled:
+        demo = await _resolve_demo_user_from_request(request)
+        if demo:
+            return demo.id
         return DEFAULT_USER_ID
 
     auth_header = request.headers.get("authorization", "")
@@ -125,15 +196,12 @@ async def resolve_request_user_id(request) -> str:
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> CurrentUser:
     if not settings.auth_enabled:
-        return CurrentUser(
-            id=DEFAULT_USER_ID,
-            clerk_id=None,
-            email=DEFAULT_USER_EMAIL,
-            is_authenticated=False,
-        )
+        demo = await _resolve_demo_user_from_request(request)
+        return demo or _demo_admin_user()
 
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(
@@ -145,21 +213,56 @@ async def get_current_user(
 
 
 async def get_optional_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> CurrentUser:
     """Like get_current_user but falls back to demo user when auth disabled or no token."""
     if not settings.auth_enabled:
-        return CurrentUser(
-            id=DEFAULT_USER_ID,
-            clerk_id=None,
-            email=DEFAULT_USER_EMAIL,
-            is_authenticated=False,
-        )
+        demo = await _resolve_demo_user_from_request(request)
+        return demo or _demo_admin_user()
     if not credentials:
         return CurrentUser(
             id=DEFAULT_USER_ID,
             clerk_id=None,
             email=DEFAULT_USER_EMAIL,
             is_authenticated=False,
+            role="user",
+            permissions=[],
+            is_active=True,
         )
     return await _resolve_authenticated_user(credentials)
+
+
+def require_permission(permission: str):
+    async def _checker(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if not user.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+        if permission not in user.permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing permission: {permission}",
+            )
+        return user
+
+    return _checker
+
+
+async def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+    if not is_platform_admin(user.role):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
+
+
+def serialize_user(user: CurrentUser) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "clerk_id": user.clerk_id,
+        "display_name": user.display_name,
+        "is_authenticated": user.is_authenticated,
+        "role": user.role,
+        "permissions": user.permissions,
+        "is_active": user.is_active,
+    }

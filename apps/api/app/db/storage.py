@@ -240,6 +240,14 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
+    async def get_user_by_id(self, user_id: str) -> dict | None:
+        pass
+
+    @abstractmethod
+    async def update_user(self, user_id: str, updates: dict) -> dict | None:
+        pass
+
+    @abstractmethod
     async def list_broker_accounts(self, enabled_only: bool = True) -> list[dict]:
         pass
 
@@ -608,13 +616,21 @@ class MemoryStorageBackend(StorageBackend):
     async def get_or_create_user(
         self, clerk_id: str, email: str = "", display_name: str = ""
     ) -> dict:
+        from app.core.permissions import resolve_initial_role
+
         users = self._data.setdefault("users", [])
+        admin_emails = settings.platform_admin_email_set
         for user in users:
             if user.get("clerk_id") == clerk_id:
                 if email and user.get("email") != email:
                     user["email"] = email
                 if display_name and user.get("display_name") != display_name:
                     user["display_name"] = display_name
+                if email and email.lower() in admin_emails:
+                    user["role"] = "platform_admin"
+                user.setdefault("role", "user")
+                user.setdefault("permissions", None)
+                user.setdefault("is_active", True)
                 user["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self._persist()
                 return user
@@ -623,12 +639,44 @@ class MemoryStorageBackend(StorageBackend):
             "clerk_id": clerk_id,
             "email": email,
             "display_name": display_name or email.split("@")[0] if email else "",
+            "role": resolve_initial_role(email, admin_emails),
+            "permissions": None,
+            "is_active": True,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         users.append(row)
         self._persist()
         return row
+
+    async def get_user_by_id(self, user_id: str) -> dict | None:
+        for user in self._data.get("users", []):
+            if user.get("id") == user_id:
+                return user
+        return None
+
+    async def update_user(self, user_id: str, updates: dict) -> dict | None:
+        from app.core.permissions import ALL_PERMISSIONS, normalize_role
+
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return None
+        allowed = {"role", "permissions", "is_active", "display_name"}
+        for key, value in updates.items():
+            if key not in allowed:
+                continue
+            if key == "role":
+                user["role"] = normalize_role(str(value))
+            elif key == "permissions":
+                if value is None:
+                    user["permissions"] = None
+                else:
+                    user["permissions"] = [p for p in value if p in ALL_PERMISSIONS]
+            else:
+                user[key] = value
+        user["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._persist()
+        return user
 
     async def list_broker_accounts(self, enabled_only: bool = True) -> list[dict]:
         uid = _uid()
@@ -1097,6 +1145,9 @@ class PostgresStorageBackend(StorageBackend):
     async def get_or_create_user(
         self, clerk_id: str, email: str = "", display_name: str = ""
     ) -> dict:
+        from app.core.permissions import resolve_initial_role
+
+        admin_emails = settings.platform_admin_email_set
         async with self._session() as session:
             result = await session.execute(select(User).where(User.clerk_id == clerk_id))
             row = result.scalar_one_or_none()
@@ -1105,14 +1156,46 @@ class PostgresStorageBackend(StorageBackend):
                     row.email = email
                 if display_name and row.display_name != display_name:
                     row.display_name = display_name
+                if email and email.lower() in admin_emails:
+                    row.role = "platform_admin"
                 await session.commit()
                 return self._user_to_dict(row)
             row = User(
                 clerk_id=clerk_id,
                 email=email,
                 display_name=display_name or (email.split("@")[0] if email else ""),
+                role=resolve_initial_role(email, admin_emails),
+                permissions=None,
+                is_active=True,
             )
             session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._user_to_dict(row)
+
+    async def get_user_by_id(self, user_id: str) -> dict | None:
+        async with self._session() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            row = result.scalar_one_or_none()
+            return self._user_to_dict(row) if row else None
+
+    async def update_user(self, user_id: str, updates: dict) -> dict | None:
+        from app.core.permissions import ALL_PERMISSIONS, normalize_role
+
+        async with self._session() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            row = result.scalar_one_or_none()
+            if not row:
+                return None
+            if "role" in updates:
+                row.role = normalize_role(str(updates["role"]))
+            if "permissions" in updates:
+                perms = updates["permissions"]
+                row.permissions = None if perms is None else [p for p in perms if p in ALL_PERMISSIONS]
+            if "is_active" in updates:
+                row.is_active = bool(updates["is_active"])
+            if "display_name" in updates:
+                row.display_name = str(updates["display_name"])
             await session.commit()
             await session.refresh(row)
             return self._user_to_dict(row)
@@ -1183,6 +1266,9 @@ class PostgresStorageBackend(StorageBackend):
             "clerk_id": row.clerk_id,
             "email": row.email,
             "display_name": row.display_name,
+            "role": getattr(row, "role", "user") or "user",
+            "permissions": getattr(row, "permissions", None),
+            "is_active": getattr(row, "is_active", True),
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }

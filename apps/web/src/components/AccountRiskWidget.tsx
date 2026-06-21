@@ -10,7 +10,7 @@ function riskTone(label: string) {
   return "text-orange";
 }
 
-export function AccountRiskWidget() {
+export function AccountRiskWidget({ compact = false }: { compact?: boolean }) {
   const [snapshot, setSnapshot] = useState<RiskSnapshot | null>(null);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
 
@@ -26,7 +26,11 @@ export function AccountRiskWidget() {
     `Tech exposure is ${techPct.toFixed(0)}%. Manual approval recommended for all trades.`;
 
   return (
-    <div className="mt-6 rounded-[18px] border border-[rgba(255,184,77,0.35)] bg-[rgba(255,184,77,0.08)] p-4">
+    <div
+      className={`rounded-[18px] border border-[rgba(255,184,77,0.35)] bg-[rgba(255,184,77,0.08)] p-3.5 ${
+        compact ? "" : "mt-6"
+      }`}
+    >
       <div className="tg-label">Current Risk</div>
       <div className={`tg-value ${riskTone(label)}`}>{label}</div>
       <p className="tg-sub mt-2">{detail}</p>

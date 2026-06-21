@@ -54,6 +54,8 @@ async def test_auth_me_demo_user(client):
     assert data["auth_enabled"] is False
     assert data["user"]["id"] == "default"
     assert data["user"]["is_authenticated"] is False
+    assert data["user"]["role"] == "platform_admin"
+    assert "admin:manage" in data["user"]["permissions"]
 
 
 def test_database_url_normalization():

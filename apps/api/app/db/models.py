@@ -184,6 +184,9 @@ class User(Base):
     clerk_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(255), default="")
     display_name: Mapped[str] = mapped_column(String(128), default="")
+    role: Mapped[str] = mapped_column(String(32), default="user")
+    permissions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

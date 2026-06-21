@@ -1,22 +1,18 @@
-import { ChatPanel } from "@/components/ChatPanel";
-import { RiskSnapshotPanel } from "@/components/RiskSnapshotPanel";
-import { Sidebar } from "@/components/Sidebar";
-import { PageHeader } from "@/components/ui/Card";
+import type { Metadata } from "next";
+import { LandingPage } from "@/components/landing/LandingPage";
+
+export const metadata: Metadata = {
+  title: "TradeGuard AI — Know Your Risk Before Every Trade",
+  description:
+    "AI-powered portfolio risk management with real-time dashboards, trade guardrails, and an intelligent risk copilot. Free during beta.",
+  openGraph: {
+    title: "TradeGuard AI — Portfolio Risk Manager",
+    description:
+      "LLM orchestration, ML signals, and a code-based risk engine to protect your portfolio.",
+    type: "website",
+  },
+};
 
 export default function HomePage() {
-  return (
-    <div className="flex min-h-screen">
-      <Sidebar />
-      <main className="mx-auto w-full max-w-[1400px] flex-1 p-7">
-        <PageHeader
-          title="AI Chat"
-          subtitle="Connected: Demo portfolio · Phase 1 analysis only"
-        />
-        <div className="grid gap-[18px] lg:grid-cols-[1.35fr_0.85fr]">
-          <ChatPanel />
-          <RiskSnapshotPanel />
-        </div>
-      </main>
-    </div>
-  );
+  return <LandingPage />;
 }

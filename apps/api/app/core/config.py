@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     auth_provider: str = "auto"  # auto | disabled | clerk
     clerk_secret_key: str = ""
     clerk_jwt_issuer: str = ""  # e.g. https://your-app.clerk.accounts.dev
+    platform_admin_emails: str = ""  # comma-separated bootstrap admins
 
     # Phase 4.2 — semi-automated strategies
     strategies_enabled: bool = True
@@ -276,6 +277,10 @@ class Settings(BaseSettings):
         if self.auth_provider == "clerk":
             return bool(self.clerk_secret_key and self.clerk_jwt_issuer)
         return bool(self.clerk_secret_key and self.clerk_jwt_issuer)
+
+    @property
+    def platform_admin_email_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.platform_admin_emails.split(",") if e.strip()}
 
     @property
     def active_news_provider(self) -> str:
