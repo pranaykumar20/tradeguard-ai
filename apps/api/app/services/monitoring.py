@@ -7,7 +7,7 @@ import structlog
 from app.core.config import settings
 from app.core.user_context import get_current_user_id
 from app.db.storage import get_storage
-from app.mcp.factory import get_mcp_client
+from app.mcp.factory import get_mcp_client, is_mcp_live_for_user
 from app.portfolio.demo import demo_portfolio
 from app.providers.alerts.factory import get_alert_provider
 from app.risk.engine import RiskEngine
@@ -29,7 +29,6 @@ DEDUPE_MINUTES = 15
 class MonitoringService:
     def __init__(self):
         self.risk = RiskEngine()
-        self.mcp = get_mcp_client()
         self.alerts = get_alert_provider()
 
     async def get_trading_state(self) -> dict:
@@ -87,9 +86,9 @@ class MonitoringService:
         return state
 
     async def _portfolio_snapshot(self) -> dict:
-        if settings.robinhood_mcp_enabled:
+        if settings.robinhood_mcp_enabled or await is_mcp_live_for_user():
             try:
-                snap = await self.mcp.get_portfolio_snapshot()
+                snap = await get_mcp_client().get_portfolio_snapshot()
                 if snap.get("positions"):
                     return snap
             except Exception as exc:
@@ -228,9 +227,9 @@ class MonitoringService:
                 }
             )
 
-        if settings.robinhood_mcp_enabled:
+        if settings.robinhood_mcp_enabled or await is_mcp_live_for_user():
             try:
-                await self.mcp.get_quote("SPY")
+                await get_mcp_client().get_quote("SPY")
                 checks.append({"name": "mcp", "status": "ok", "detail": "MCP reachable"})
             except Exception as exc:
                 detail = f"MCP health check failed: {exc}"

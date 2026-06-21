@@ -130,7 +130,7 @@ export const FAQ_ITEMS = [
   },
   {
     q: "How do I connect my Robinhood account?",
-    a: "After signing up, complete the onboarding wizard to connect via Robinhood Agentic Trading MCP. During beta you can also explore with the built-in demo portfolio.",
+    a: "Open Account setup (/onboarding) and click Connect Robinhood. You'll sign in with Robinhood OAuth — no MCP URL to copy. After connecting, fund your separate Agentic account in Robinhood. During beta you can also explore with the demo portfolio.",
   },
   {
     q: "What happens when a trade is blocked?",

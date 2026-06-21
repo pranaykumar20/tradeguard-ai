@@ -82,7 +82,11 @@ class Settings(BaseSettings):
 
     mcp_provider: str = "auto"  # auto | mock | live
     robinhood_mcp_url: str = ""
+    robinhood_mcp_default_url: str = "https://agent.robinhood.com/mcp/trading"
     robinhood_mcp_enabled: bool = False
+    api_public_url: str = ""
+    frontend_url: str = ""
+    secrets_encryption_key: str = ""
 
     polygon_api_key: str = ""
     polygon_base_url: str = "https://api.polygon.io"
@@ -240,6 +244,23 @@ class Settings(BaseSettings):
     @property
     def active_mcp_provider(self) -> str:
         return "live" if self.use_live_mcp else "mock"
+
+    @property
+    def effective_robinhood_mcp_url(self) -> str:
+        return (self.robinhood_mcp_url or self.robinhood_mcp_default_url).rstrip("/")
+
+    @property
+    def robinhood_oauth_redirect_uri(self) -> str:
+        base = (self.api_public_url or "http://localhost:8000").rstrip("/")
+        return f"{base}/api/brokers/robinhood/callback"
+
+    @property
+    def frontend_onboarding_url(self) -> str:
+        if self.frontend_url.strip():
+            return f"{self.frontend_url.rstrip('/')}/onboarding"
+        if self.cors_origins:
+            return f"{self.cors_origins[0].rstrip('/')}/onboarding"
+        return "http://localhost:3000/onboarding"
 
     @property
     def use_slack_alerts(self) -> bool:

@@ -15,9 +15,26 @@ _clients: dict[str, BrokerAdapter] = {}
 
 def list_broker_ids() -> list[str]:
     ids = ["mock_ira"]
-    if settings.robinhood_mcp_enabled:
+    if settings.multi_broker_enabled or settings.robinhood_mcp_enabled:
         ids.insert(0, "robinhood_agentic")
     return ids
+
+
+async def list_brokers_async() -> list[dict]:
+    out = []
+    for broker_id in list_broker_ids():
+        broker = get_broker(broker_id)
+        configured = broker.is_configured
+        if broker_id == "robinhood_agentic" and hasattr(broker, "is_configured_for_user"):
+            configured = await broker.is_configured_for_user()
+        out.append(
+            {
+                "broker_id": broker_id,
+                "display_name": broker.display_name,
+                "configured": configured,
+            }
+        )
+    return out
 
 
 def get_broker(broker_id: str | None = None) -> BrokerAdapter:

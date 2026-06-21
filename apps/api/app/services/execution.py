@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from app.brokers.factory import get_broker
 from app.core.config import settings
 from app.db.storage import get_storage
+from app.mcp.factory import is_mcp_live_for_user
 from app.portfolio.demo import demo_portfolio
 from app.risk.engine import RiskEngine
 from app.services.monitoring import MonitoringService
@@ -39,7 +40,7 @@ class ExecutionService:
                     return snap
             except Exception:
                 pass
-        if settings.robinhood_mcp_enabled:
+        if settings.robinhood_mcp_enabled or await is_mcp_live_for_user():
             try:
                 broker, bid = self._resolve_broker(settings.default_broker_id)
                 snap = await broker.get_portfolio_snapshot(account_id)

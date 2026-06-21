@@ -256,6 +256,16 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
+    async def update_broker_account(self, account_row_id: str, updates: dict) -> dict | None:
+        pass
+
+    @abstractmethod
+    async def get_broker_account(
+        self, broker_id: str, account_id: str | None = None
+    ) -> dict | None:
+        pass
+
+    @abstractmethod
     async def list_tax_lots(
         self, ticker: str | None = None, account_id: str | None = None
     ) -> list[dict]:
@@ -697,6 +707,33 @@ class MemoryStorageBackend(StorageBackend):
         self._data.setdefault("broker_accounts", []).append(row)
         self._persist()
         return row
+
+    async def update_broker_account(self, account_row_id: str, updates: dict) -> dict | None:
+        uid = _uid()
+        for account in self._data.get("broker_accounts", []):
+            if account.get("id") == account_row_id and _row_user_id(account) == uid:
+                for key, value in updates.items():
+                    if key == "meta" and isinstance(account.get("meta"), dict) and isinstance(value, dict):
+                        account["meta"] = {**account["meta"], **value}
+                    else:
+                        account[key] = value
+                self._persist()
+                return account
+        return None
+
+    async def get_broker_account(
+        self, broker_id: str, account_id: str | None = None
+    ) -> dict | None:
+        uid = _uid()
+        for account in self._data.get("broker_accounts", []):
+            if _row_user_id(account) != uid:
+                continue
+            if account.get("broker_id") != broker_id:
+                continue
+            if account_id and account.get("account_id") != account_id:
+                continue
+            return account
+        return None
 
     async def list_tax_lots(
         self, ticker: str | None = None, account_id: str | None = None
@@ -1217,6 +1254,40 @@ class PostgresStorageBackend(StorageBackend):
             await session.commit()
             await session.refresh(row)
             return self._broker_account_to_dict(row)
+
+    async def update_broker_account(self, account_row_id: str, updates: dict) -> dict | None:
+        async with self._session() as session:
+            result = await session.execute(
+                select(BrokerAccount).where(
+                    BrokerAccount.id == account_row_id,
+                    BrokerAccount.user_id == _uid(),
+                )
+            )
+            row = result.scalar_one_or_none()
+            if not row:
+                return None
+            for key, value in updates.items():
+                if key == "meta" and isinstance(value, dict):
+                    row.meta = {**(row.meta or {}), **value}
+                elif hasattr(row, key):
+                    setattr(row, key, value)
+            await session.commit()
+            await session.refresh(row)
+            return self._broker_account_to_dict(row)
+
+    async def get_broker_account(
+        self, broker_id: str, account_id: str | None = None
+    ) -> dict | None:
+        async with self._session() as session:
+            query = select(BrokerAccount).where(
+                BrokerAccount.user_id == _uid(),
+                BrokerAccount.broker_id == broker_id,
+            )
+            if account_id:
+                query = query.where(BrokerAccount.account_id == account_id)
+            result = await session.execute(query.limit(1))
+            row = result.scalar_one_or_none()
+            return self._broker_account_to_dict(row) if row else None
 
     async def list_tax_lots(
         self, ticker: str | None = None, account_id: str | None = None

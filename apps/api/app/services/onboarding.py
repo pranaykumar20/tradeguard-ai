@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.db.storage import get_storage
+from app.services.robinhood_connect import RobinhoodConnectService
 
 ONBOARDING_STEPS = [
     {
@@ -14,8 +15,8 @@ ONBOARDING_STEPS = [
     },
     {
         "id": "connect_mcp",
-        "title": "Connect Robinhood MCP",
-        "description": "Enable Agentic Trading and set ROBINHOOD_MCP_URL in your API env.",
+        "title": "Connect Robinhood",
+        "description": "Link your Robinhood Agentic account via secure OAuth — no API keys to copy.",
         "auto": True,
     },
     {
@@ -46,6 +47,9 @@ ONBOARDING_STEPS = [
 
 
 class OnboardingService:
+    def __init__(self):
+        self.robinhood = RobinhoodConnectService()
+
     async def _completed_manual(self) -> set[str]:
         storage = await get_storage()
         state = await storage.get_app_state("onboarding") or {}
@@ -58,11 +62,16 @@ class OnboardingService:
         state["updated_at"] = datetime.now(timezone.utc).isoformat()
         await storage.set_app_state("onboarding", state)
 
-    def _auto_complete(self, step_id: str) -> bool:
+    async def _mcp_connected(self) -> bool:
+        if await self.robinhood.is_user_connected():
+            return True
+        return settings.robinhood_mcp_enabled and bool(settings.robinhood_mcp_url)
+
+    async def _auto_complete(self, step_id: str) -> bool:
         if step_id == "welcome":
             return True
         if step_id == "connect_mcp":
-            return settings.robinhood_mcp_enabled and bool(settings.robinhood_mcp_url)
+            return await self._mcp_connected()
         if step_id == "set_limits":
             return settings.risk_require_manual_approval and settings.risk_max_trade_usd <= 500
         if step_id == "enable_monitoring":
@@ -71,16 +80,18 @@ class OnboardingService:
 
     async def get_status(self) -> dict:
         manual = await self._completed_manual()
+        rh_status = await self.robinhood.get_status()
         steps = []
         completed_count = 0
         for step in ONBOARDING_STEPS:
             sid = step["id"]
-            done = self._auto_complete(sid) or sid in manual
+            done = await self._auto_complete(sid) or sid in manual
             if done:
                 completed_count += 1
             steps.append({**step, "completed": done, "manual_confirm": not step["auto"]})
 
         total = len(ONBOARDING_STEPS)
+        mcp_connected = await self._mcp_connected()
         return {
             "steps": steps,
             "completed_count": completed_count,
@@ -94,9 +105,13 @@ class OnboardingService:
                 "allow_options": settings.risk_allow_options,
             },
             "mcp": {
-                "enabled": settings.robinhood_mcp_enabled,
-                "configured": bool(settings.robinhood_mcp_url),
+                "enabled": True,
+                "configured": mcp_connected,
+                "connected": rh_status["connected"],
+                "connected_at": rh_status.get("connected_at"),
+                "mcp_url": rh_status.get("mcp_url"),
             },
+            "robinhood": rh_status,
             "monitoring_enabled": settings.monitoring_enabled,
         }
 

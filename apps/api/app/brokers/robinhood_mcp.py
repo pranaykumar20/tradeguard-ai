@@ -2,18 +2,26 @@
 
 from app.brokers.base import BrokerAdapter
 from app.mcp.factory import get_mcp_client
+from app.services.robinhood_connect import RobinhoodConnectService
 
 
 class RobinhoodMCPBroker(BrokerAdapter):
     broker_id = "robinhood_agentic"
     display_name = "Robinhood Agentic"
 
-    def __init__(self):
-        self._client = get_mcp_client()
+    @property
+    def _client(self):
+        return get_mcp_client()
 
     @property
     def provider_name(self) -> str:
         return self._client.provider_name
+
+    async def is_configured_for_user(self) -> bool:
+        connect = RobinhoodConnectService()
+        if await connect.is_user_connected():
+            return True
+        return self._client.is_configured
 
     @property
     def is_configured(self) -> bool:

@@ -1,4 +1,4 @@
-"""Live Robinhood MCP via MCP SDK — activated when ROBINHOOD_MCP_URL is set."""
+"""Live Robinhood MCP via MCP SDK — per-user OAuth or global URL."""
 
 import structlog
 
@@ -12,20 +12,33 @@ logger = structlog.get_logger()
 class LiveRobinhoodMCPClient(RobinhoodMCPClientBase):
     provider_name = "live"
 
-    def __init__(self):
-        self.url = settings.robinhood_mcp_url.rstrip("/")
+    def __init__(self, url: str | None = None, access_token: str | None = None):
+        self.url = (url or settings.effective_robinhood_mcp_url).rstrip("/")
+        self._access_token = access_token
         self._fallback = MockRobinhoodMCPClient()
 
     @property
     def is_configured(self) -> bool:
         return bool(self.url)
 
+    async def _resolve_access_token(self) -> str | None:
+        if self._access_token:
+            return self._access_token
+        from app.services.robinhood_connect import RobinhoodConnectService
+
+        return await RobinhoodConnectService().get_valid_access_token()
+
     async def _call_tool(self, tool_name: str, arguments: dict) -> dict:
+        access_token = await self._resolve_access_token()
+        headers = {}
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
+
         try:
             from mcp.client.session import ClientSession
             from mcp.client.streamable_http import streamablehttp_client
 
-            async with streamablehttp_client(self.url) as (read, write, _):
+            async with streamablehttp_client(self.url, headers=headers or None) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool(tool_name, arguments)

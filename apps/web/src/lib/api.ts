@@ -1024,9 +1024,38 @@ export type OnboardingStatus = {
     require_manual_approval: boolean;
     allow_options: boolean;
   };
-  mcp: { enabled: boolean; configured: boolean };
+  mcp: { enabled: boolean; configured: boolean; connected?: boolean; connected_at?: string | null; mcp_url?: string };
+  robinhood?: RobinhoodConnectionStatus;
   monitoring_enabled: boolean;
 };
+
+export type RobinhoodConnectionStatus = {
+  connected: boolean;
+  connected_at?: string | null;
+  broker_id: string;
+  account_id: string;
+  mcp_url: string;
+  oauth_available: boolean;
+};
+
+export async function getRobinhoodConnectionStatus(): Promise<RobinhoodConnectionStatus & { user_id?: string }> {
+  return fetchJson("/api/brokers/robinhood/status");
+}
+
+export async function startRobinhoodConnect(returnPath = "/onboarding"): Promise<{
+  authorization_url: string;
+  state: string;
+  redirect_uri: string;
+}> {
+  return fetchJson("/api/brokers/robinhood/connect", {
+    method: "POST",
+    body: JSON.stringify({ return_path: returnPath }),
+  });
+}
+
+export async function disconnectRobinhood(): Promise<RobinhoodConnectionStatus> {
+  return fetchJson("/api/brokers/robinhood/disconnect", { method: "POST" });
+}
 
 export async function getOnboardingStatus(): Promise<OnboardingStatus> {
   return fetchJson<OnboardingStatus>("/api/onboarding/status");
