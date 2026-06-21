@@ -42,9 +42,11 @@ class TickerAnalysis(BaseModel):
 @router.get("/ticker/{ticker}", response_model=TickerAnalysis)
 async def analyze_ticker(ticker: str):
     ticker = ticker.upper()
-    features = await compute_ticker_features(ticker)
-    scores = score_ticker(features, ticker)
     regime_data = await regime_service.detect()
+    features = await compute_ticker_features(ticker)
+    features["ml_vol_prob"] = regime_data.get("ml_vol_prob", 0)
+    features["ml_vol_confidence"] = regime_data.get("ml_vol_confidence", 0)
+    scores = score_ticker(features, ticker)
     adjusted = regime_service.apply_to_score(scores["composite"], regime_data)
     verdict = risk_engine.evaluate_ticker(
         ticker, features, scores, regime=regime_data
@@ -73,6 +75,8 @@ async def compare_tickers(tickers: str = Query(..., description="Comma-separated
     results = []
     for symbol in symbols[:6]:
         features = await compute_ticker_features(symbol)
+        features["ml_vol_prob"] = regime_data.get("ml_vol_prob", 0)
+        features["ml_vol_confidence"] = regime_data.get("ml_vol_confidence", 0)
         scores = score_ticker(features, symbol)
         verdict = risk_engine.evaluate_ticker(symbol, features, scores, regime=regime_data)
         results.append(

@@ -55,6 +55,19 @@ async def ml_retrain():
     return result
 
 
+@router.get("/ml/history")
+async def ml_history():
+    return await ml.history()
+
+
+@router.post("/ml/rollback/{version}")
+async def ml_rollback(version: int):
+    result = await ml.rollback(version)
+    if result.get("status") != "ok":
+        raise HTTPException(status_code=404, detail=result)
+    return result
+
+
 @router.post("/rag/refresh")
 async def refresh_rag_index():
     """Re-index playbooks, SEC filings, news, and journal into pgvector."""

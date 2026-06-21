@@ -1,151 +1,211 @@
-"""Retrain direction model from journal outcomes — Phase 6.2."""
+"""Retrain direction model from market data and journal snapshots."""
 
-import json
-from datetime import datetime, timezone
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
 import structlog
+
+import pandas as pd
 
 from app.core.config import settings
 from app.db.storage import get_storage
-from app.ml.training import ARTIFACTS_DIR, FEATURE_COLS, predict_direction, train_direction_model
+from app.ml.feature_builder import FEATURE_COLS, TARGET_COL, build_training_frame, macro_from_qqq_bars, qqq_trend_to_numeric
+from app.ml.model_registry import list_model_history, load_meta, predict_direction_prob, rollback_to_version
+from app.ml.snapshot import journal_target_from_trade
+from app.ml.training import train_direction_model
+from app.ml.volatility_builder import build_volatility_training_frame
+from app.ml.volatility_registry import load_vol_meta
+from app.ml.volatility_training import train_volatility_model
 from app.providers.market.factory import get_market_data_provider
 from app.providers.market.mock import MockMarketDataProvider
 
 logger = structlog.get_logger()
-META_PATH = ARTIFACTS_DIR / "model_meta.json"
+
 BOOTSTRAP_TICKERS = ["NVDA", "MSFT", "META", "TSLA", "QQQ", "GBTC"]
+MACRO_TICKERS = ["SPY", "QQQ"]
 
 
 class MLRetrainService:
     async def status(self) -> dict:
-        meta = self._load_meta()
-        path = ARTIFACTS_DIR / "direction_model.joblib"
+        meta = load_meta()
+        vol_meta = load_vol_meta()
+        history = list_model_history()
         return {
-            "model_exists": path.exists(),
-            "version": meta.get("version", 1),
+            "model_exists": meta.get("version", 0) > 0,
+            "version": meta.get("version", 0),
+            "model_type": meta.get("model_type", "none"),
             "last_trained_at": meta.get("last_trained_at"),
-            "source": meta.get("source", "bootstrap"),
+            "source": meta.get("source", "none"),
             "accuracy": meta.get("accuracy"),
+            "auc": meta.get("auc"),
+            "brier": meta.get("brier"),
+            "deploy_gate_passed": meta.get("deploy_gate_passed", False),
+            "feature_importance": meta.get("feature_importance", {}),
+            "walk_forward_folds": meta.get("walk_forward_folds"),
+            "samples": meta.get("samples"),
             "journal_trades_used": meta.get("journal_trades_used", 0),
+            "journal_retrain_enabled": settings.ml_journal_retrain_enabled,
             "min_trades_required": settings.ml_retrain_min_trades,
+            "history_versions": len(history),
+            "volatility": {
+                "enabled": settings.ml_volatility_enabled,
+                "model_exists": vol_meta.get("version", 0) > 0,
+                "version": vol_meta.get("version", 0),
+                "model_type": vol_meta.get("model_type", "none"),
+                "last_trained_at": vol_meta.get("last_trained_at"),
+                "auc": vol_meta.get("auc"),
+                "accuracy": vol_meta.get("accuracy"),
+                "feature_importance": vol_meta.get("feature_importance", {}),
+                "high_threshold": settings.ml_vol_high_threshold,
+            },
         }
+
+    async def history(self) -> dict:
+        return {"active": load_meta(), "versions": list_model_history()}
+
+    async def rollback(self, version: int) -> dict:
+        result = rollback_to_version(version)
+        if result.get("status") != "ok":
+            return result
+        logger.info("ml_model_rollback", version=version)
+        return result
 
     async def retrain(self) -> dict:
+        market = await self._market_training_rows()
+        journal = await self._journal_training_rows()
+        journal_count = len(journal)
+
+        if journal_count >= settings.ml_retrain_min_trades and not journal.empty:
+            dataset = pd.concat([market, journal], ignore_index=True)
+            source = "market_and_journal"
+        else:
+            dataset = market
+            source = "market_only"
+            journal_count = 0
+
+        if dataset.empty or len(dataset) < settings.ml_min_samples:
+            return {"status": "skipped", "reason": "insufficient training data", "samples": len(dataset)}
+
+        result = train_direction_model(
+            dataset,
+            source=source,
+            journal_trades_used=journal_count,
+        )
+        if result.get("status") == "ok":
+            logger.info(
+                "ml_retrain_complete",
+                version=result.get("version"),
+                auc=result.get("auc"),
+                model_type=result.get("model_type"),
+                journal_trades_used=journal_count,
+            )
+        else:
+            logger.info("ml_retrain_skipped", reason=result.get("reason"), new_auc=result.get("new_auc"))
+        result["journal_trades_used"] = journal_count
+        result["samples"] = len(dataset)
+        result["source"] = source
+
+        if settings.ml_volatility_enabled:
+            vol_dataset = await self._volatility_training_rows()
+            vol_result = train_volatility_model(vol_dataset, source="macro")
+            result["volatility"] = vol_result
+            if vol_result.get("status") == "ok":
+                logger.info(
+                    "ml_vol_retrain_complete",
+                    version=vol_result.get("version"),
+                    auc=vol_result.get("auc"),
+                )
+
+        return result
+
+    async def _journal_training_rows(self) -> pd.DataFrame:
+        if not settings.ml_journal_retrain_enabled:
+            return pd.DataFrame()
+
         storage = await get_storage()
         trades = await storage.list_paper_trades(limit=500)
-        filled = [t for t in trades if t.get("status") == "filled" and t.get("pnl") is not None]
+        rows: list[dict] = []
 
-        market_rows = await self._market_training_rows()
-        journal_rows = await self._journal_training_rows(filled)
+        for trade in trades:
+            if trade.get("status") != "filled":
+                continue
+            pnl = trade.get("pnl")
+            if pnl is None:
+                continue
+            approval_id = trade.get("approval_id")
+            if not approval_id:
+                continue
 
-        if len(journal_rows) >= settings.ml_retrain_min_trades:
-            dataset = pd.concat([market_rows, journal_rows], ignore_index=True)
-            source = "journal+market"
-        else:
-            dataset = market_rows
-            source = "market_only"
+            approval = await storage.get_approval_request(approval_id)
+            if not approval:
+                continue
 
-        if dataset.empty or len(dataset) < 30:
-            return {"status": "skipped", "reason": "insufficient training data"}
+            snapshot = (approval.get("risk_preview") or {}).get("ml_snapshot")
+            if not snapshot:
+                continue
 
-        metrics = train_direction_model(dataset, feature_cols=FEATURE_COLS)
-        meta = self._load_meta()
-        version = int(meta.get("version", 1)) + 1
-        self._save_meta(
-            {
-                "version": version,
-                "last_trained_at": datetime.now(timezone.utc).isoformat(),
-                "source": source,
-                "accuracy": metrics.get("accuracy"),
-                "journal_trades_used": len(journal_rows),
-            }
-        )
-        logger.info("ml_retrain_complete", version=version, source=source, accuracy=metrics.get("accuracy"))
-        return {
-            "status": "ok",
-            "version": version,
-            "source": source,
-            "accuracy": metrics.get("accuracy"),
-            "journal_trades_used": len(journal_rows),
-            "samples": len(dataset),
-        }
+            try:
+                row = {col: float(snapshot[col]) for col in FEATURE_COLS}
+            except (KeyError, TypeError, ValueError):
+                continue
+
+            side = str(trade.get("side", "buy"))
+            row[TARGET_COL] = journal_target_from_trade(side, float(pnl))
+            row["ticker"] = trade.get("ticker", "")
+            rows.append(row)
+
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
 
     async def _market_training_rows(self) -> pd.DataFrame:
         provider = get_market_data_provider()
         mock = MockMarketDataProvider()
+        qqq_bars = await provider.get_macro_bars("QQQ", days=60)
+        if len(qqq_bars) < 20:
+            qqq_bars = await mock.get_macro_bars("QQQ", days=60)
+        qqq_trend, vix_change = macro_from_qqq_bars(qqq_bars)
+        qqq_num = qqq_trend_to_numeric(qqq_trend)
+
         rows = []
         for ticker in BOOTSTRAP_TICKERS:
             bars = await provider.get_daily_bars(ticker, days=180)
             if len(bars) < 60:
                 bars = await mock.get_daily_bars(ticker, days=180)
-            close = bars["close"]
-            ret5 = close.pct_change(5).shift(-5)
-            df = pd.DataFrame(
-                {
-                    "price_vs_20dma": (close - close.rolling(20).mean()) / close.rolling(20).mean() * 100,
-                    "price_vs_50dma": (close - close.rolling(50).mean()) / close.rolling(50).mean() * 100,
-                    "rsi_14": close.pct_change().rolling(14).std() * 100,
-                    "macd_signal": close.diff().rolling(5).mean(),
-                    "atr_percent": (close.rolling(14).max() - close.rolling(14).min()) / close * 100,
-                    "volume_spike": bars["volume"] / bars["volume"].rolling(20).mean(),
-                    "target_up_5d": (ret5 > 0).astype(int),
-                }
-            ).dropna()
-            rows.append(df)
+            frame = build_training_frame(
+                bars,
+                ticker=ticker,
+                news_sentiment=50.0,
+                qqq_trend_numeric=qqq_num,
+                vix_change=vix_change,
+                regime_risk_adj=0.0,
+            )
+            if not frame.empty:
+                rows.append(frame)
         return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
-    async def _journal_training_rows(self, filled: list[dict]) -> pd.DataFrame:
+    async def _volatility_training_rows(self) -> pd.DataFrame:
+        provider = get_market_data_provider()
+        mock = MockMarketDataProvider()
+        qqq_bars = await provider.get_macro_bars("QQQ", days=60)
+        if len(qqq_bars) < 20:
+            qqq_bars = await mock.get_macro_bars("QQQ", days=60)
+        qqq_trend, vix_change = macro_from_qqq_bars(qqq_bars)
+        qqq_num = qqq_trend_to_numeric(qqq_trend)
+
         rows = []
-        for trade in filled:
-            ticker = trade.get("ticker", "QQQ")
-            try:
-                from app.services.features import compute_ticker_features
-
-                features = await compute_ticker_features(ticker, use_cache=True)
-            except Exception:
-                continue
-            try:
-                vector = np.array(
-                    [
-                        float(features["price_vs_20dma"]),
-                        float(features["price_vs_50dma"]),
-                        float(features["rsi_14"]),
-                        float(features["macd_signal"]),
-                        float(features["atr_percent"]),
-                        float(features["volume_spike"]),
-                    ]
-                )
-            except (KeyError, TypeError, ValueError):
-                continue
-            target = 1 if (trade.get("pnl") or 0) > 0 else 0
-            rows.append(
-                {
-                    "price_vs_20dma": vector[0],
-                    "price_vs_50dma": vector[1],
-                    "rsi_14": vector[2],
-                    "macd_signal": vector[3],
-                    "atr_percent": vector[4],
-                    "volume_spike": vector[5],
-                    "target_up_5d": target,
-                }
+        for ticker in MACRO_TICKERS:
+            bars = await provider.get_macro_bars(ticker, days=180)
+            if len(bars) < 60:
+                bars = await mock.get_macro_bars(ticker, days=180)
+            frame = build_volatility_training_frame(
+                bars,
+                ticker=ticker,
+                qqq_trend_numeric=qqq_num,
+                vix_change=vix_change,
             )
-        return pd.DataFrame(rows) if rows else pd.DataFrame()
-
-    @staticmethod
-    def _load_meta() -> dict:
-        if META_PATH.exists():
-            return json.loads(META_PATH.read_text())
-        return {}
-
-    @staticmethod
-    def _save_meta(meta: dict) -> None:
-        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-        META_PATH.write_text(json.dumps(meta, indent=2))
+            if not frame.empty:
+                rows.append(frame)
+        return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
     @staticmethod
     def sample_prediction() -> float:
-        sample = np.array([2.0, 1.0, 55.0, 0.1, 2.5, 1.1])
-        return predict_direction(sample)
+        import numpy as np
+
+        sample = np.array([2.0, 1.0, 55.0, 0.1, 2.5, 1.1, 50.0, 1.0, 2.0, 0.0])
+        return predict_direction_prob(sample)

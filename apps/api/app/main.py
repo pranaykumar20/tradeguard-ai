@@ -12,7 +12,9 @@ from app.core.middleware import UserContextMiddleware
 from app.core.user_context import for_each_user
 from app.db.storage import close_storage, init_storage
 from app.rag.indexer import RAGIndexer
-from app.services.ml_bootstrap import ensure_direction_model
+from app.services.ml_bootstrap import ensure_direction_model, ensure_volatility_model
+from app.ml.model_registry import get_model
+from app.ml.volatility_registry import get_vol_model
 from app.services.accounts import AccountService
 from app.services.platform_health import PlatformHealthService
 from app.tasks.market import refresh_market_features_async
@@ -27,6 +29,9 @@ async def lifespan(app: FastAPI):
     setup_logging()
     await init_storage()
     await ensure_direction_model()
+    await ensure_volatility_model()
+    get_model()
+    get_vol_model()
     await RAGIndexer().ensure_initialized()
     await refresh_market_features_async()
     await for_each_user(run_monitoring_check_async)

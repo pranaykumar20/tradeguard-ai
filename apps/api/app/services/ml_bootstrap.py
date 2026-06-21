@@ -1,54 +1,91 @@
-"""Bootstrap ML model on mock market data if no artifact exists."""
+"""Bootstrap ML models on market data if no artifacts exist."""
 
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
 import structlog
 
-from app.ml.training import ARTIFACTS_DIR, FEATURE_COLS, train_direction_model
+import pandas as pd
+
+from app.ml.feature_builder import build_training_frame, macro_from_qqq_bars, qqq_trend_to_numeric
+from app.ml.model_registry import model_exists
+from app.ml.training import train_direction_model
+from app.ml.volatility_builder import build_volatility_training_frame
+from app.ml.volatility_registry import vol_model_exists
+from app.ml.volatility_training import train_volatility_model
 from app.providers.market.factory import get_market_data_provider
 from app.providers.market.mock import MockMarketDataProvider
 
 logger = structlog.get_logger()
 
 BOOTSTRAP_TICKERS = ["NVDA", "MSFT", "META", "TSLA", "QQQ", "GBTC"]
+MACRO_TICKERS = ["SPY", "QQQ"]
+
+
+async def _macro_context(provider, mock):
+    qqq_bars = await provider.get_macro_bars("QQQ", days=60)
+    if len(qqq_bars) < 20:
+        qqq_bars = await mock.get_macro_bars("QQQ", days=60)
+    qqq_trend, vix_change = macro_from_qqq_bars(qqq_bars)
+    return qqq_trend, vix_change, qqq_trend_to_numeric(qqq_trend)
 
 
 async def ensure_direction_model() -> dict | None:
-    path = ARTIFACTS_DIR / "direction_model.joblib"
-    if path.exists():
+    if model_exists():
         return None
 
     provider = get_market_data_provider()
     mock = MockMarketDataProvider()
-    rows = []
+    qqq_trend, vix_change, qqq_num = await _macro_context(provider, mock)
 
+    rows = []
     for ticker in BOOTSTRAP_TICKERS:
         bars = await provider.get_daily_bars(ticker, days=180)
         if len(bars) < 60:
             bars = await mock.get_daily_bars(ticker, days=180)
-        close = bars["close"]
-        ret5 = close.pct_change(5).shift(-5)
-        df = pd.DataFrame(
-            {
-                "price_vs_20dma": (close - close.rolling(20).mean()) / close.rolling(20).mean() * 100,
-                "price_vs_50dma": (close - close.rolling(50).mean()) / close.rolling(50).mean() * 100,
-                "rsi_14": close.pct_change().rolling(14).std() * 100,
-                "macd_signal": close.diff().rolling(5).mean(),
-                "atr_percent": (close.rolling(14).max() - close.rolling(14).min()) / close * 100,
-                "volume_spike": bars["volume"] / bars["volume"].rolling(20).mean(),
-                "target_up_5d": (ret5 > 0).astype(int),
-            }
-        ).dropna()
-        df["ticker"] = ticker
-        rows.append(df)
+        frame = build_training_frame(
+            bars,
+            ticker=ticker,
+            news_sentiment=50.0,
+            qqq_trend_numeric=qqq_num,
+            vix_change=vix_change,
+            regime_risk_adj=0.0,
+        )
+        if not frame.empty:
+            rows.append(frame)
 
     if not rows:
         return None
 
     dataset = pd.concat(rows, ignore_index=True)
-    feature_cols = FEATURE_COLS
-    metrics = train_direction_model(dataset, feature_cols=feature_cols)
-    logger.info("ml_model_bootstrapped", accuracy=metrics.get("accuracy"))
-    return metrics
+    result = train_direction_model(dataset, source="bootstrap", force_deploy=True)
+    logger.info("ml_model_bootstrapped", status=result.get("status"), auc=result.get("auc"))
+    return result
+
+
+async def ensure_volatility_model() -> dict | None:
+    if vol_model_exists():
+        return None
+
+    provider = get_market_data_provider()
+    mock = MockMarketDataProvider()
+    qqq_trend, vix_change, qqq_num = await _macro_context(provider, mock)
+
+    rows = []
+    for ticker in MACRO_TICKERS:
+        bars = await provider.get_macro_bars(ticker, days=180)
+        if len(bars) < 60:
+            bars = await mock.get_macro_bars(ticker, days=180)
+        frame = build_volatility_training_frame(
+            bars,
+            ticker=ticker,
+            qqq_trend_numeric=qqq_num,
+            vix_change=vix_change,
+        )
+        if not frame.empty:
+            rows.append(frame)
+
+    if not rows:
+        return None
+
+    dataset = pd.concat(rows, ignore_index=True)
+    result = train_volatility_model(dataset, source="bootstrap", force_deploy=True)
+    logger.info("ml_vol_model_bootstrapped", status=result.get("status"), auc=result.get("auc"))
+    return result

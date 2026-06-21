@@ -51,6 +51,7 @@ function TickerPanel({ ticker }: { ticker: string }) {
   }
 
   const mlProb = Math.round(Number(analysis.features.ml_bullish_prob) * 100);
+  const mlConf = Math.round(Number(analysis.scores.ml_confidence ?? analysis.features.ml_confidence ?? 0) * 100);
 
   return (
     <div className="grid gap-[18px] lg:grid-cols-[1.35fr_0.85fr]">
@@ -75,6 +76,7 @@ function TickerPanel({ ticker }: { ticker: string }) {
             <div className={`tg-value ${mlProb > 60 ? "text-green" : mlProb < 45 ? "text-red" : "text-orange"}`}>
               {mlProb}%
             </div>
+            <div className="mt-1 text-[11px] text-muted">Confidence {mlConf}%</div>
           </div>
         </div>
       </Card>

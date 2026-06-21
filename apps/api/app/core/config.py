@@ -190,6 +190,20 @@ class Settings(BaseSettings):
     sec_edgar_user_agent: str = "TradeGuard-AI tradeguard@example.com"
     regime_detection_enabled: bool = True
     ml_retrain_min_trades: int = 10
+    ml_model_type: str = "xgboost"
+    ml_walk_forward_folds: int = 4
+    ml_min_samples: int = 30
+    ml_min_auc_delta: float = 0.02
+    ml_retrain_interval_days: int = 7
+    ml_low_confidence_threshold: float = 0.15
+    ml_bullish_buy_min: float = 0.45
+    ml_bullish_sell_max: float = 0.65
+    ml_journal_retrain_enabled: bool = True
+    ml_max_history_versions: int = 5
+    ml_volatility_enabled: bool = True
+    ml_vol_high_threshold: float = 0.55
+    ml_vol_score_penalty: float = 12.0
+    market_refresh_interval_minutes: int = 15
 
     cors_origins_env: str = Field(
         default="http://localhost:3000,http://localhost:3001",

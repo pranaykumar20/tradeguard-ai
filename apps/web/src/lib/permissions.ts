@@ -51,6 +51,7 @@ export const APP_NAV: NavItem[] = [
   { id: "chat", href: "/chat", label: "AI Insights", icon: "✦", permission: PERMISSIONS.CHAT },
   { id: "monitoring", href: "/monitoring", label: "Alerts", icon: "⚑", permission: PERMISSIONS.MONITORING },
   { id: "analysis", href: "/analysis", label: "Stock Analyzer", icon: "↗", permission: PERMISSIONS.ANALYSIS },
+  { id: "ml", href: "/ml", label: "ML Models", icon: "◈", permission: PERMISSIONS.ANALYSIS },
   { id: "journal", href: "/journal", label: "Reports", icon: "☰", permission: PERMISSIONS.JOURNAL },
   { id: "approvals", href: "/approvals", label: "Trade Approval", icon: "✓", permission: PERMISSIONS.APPROVALS },
   {
@@ -82,6 +83,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: Permission }[] = [
   { prefix: "/chat", permission: PERMISSIONS.CHAT },
   { prefix: "/monitoring", permission: PERMISSIONS.MONITORING },
   { prefix: "/analysis", permission: PERMISSIONS.ANALYSIS },
+  { prefix: "/ml", permission: PERMISSIONS.ANALYSIS },
   { prefix: "/journal", permission: PERMISSIONS.JOURNAL },
   { prefix: "/approvals", permission: PERMISSIONS.APPROVALS },
   { prefix: "/onboarding", permission: PERMISSIONS.ONBOARDING },

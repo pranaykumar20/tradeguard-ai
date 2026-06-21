@@ -250,6 +250,10 @@ class ExecutionService:
             )
             raise ValueError("Risk blocks changed — order rejected: " + "; ".join(risk["blocks"]))
 
+        submit_snapshot = (req.get("risk_preview") or {}).get("ml_snapshot")
+        if submit_snapshot:
+            risk["ml_snapshot"] = submit_snapshot
+
         broker, _ = self._resolve_broker(req.get("broker_id"))
         order = {
             "ticker": req["ticker"],

@@ -21,8 +21,12 @@ def compute_ticker_features(ticker: str) -> dict[str, float | str]:
         "volume_spike": round(_seeded_float(ticker, "vol", 0.6, 2.2), 2),
         "news_sentiment_score": round(_seeded_float(ticker, "news", 35, 85), 0),
         "qqq_trend": "bullish" if _seeded_float(ticker, "qqq", 0, 1) > 0.45 else "bearish",
+        "qqq_trend_numeric": 1.0 if _seeded_float(ticker, "qqq", 0, 1) > 0.45 else 0.0,
         "vix_change": round(_seeded_float(ticker, "vix", -3, 8), 1),
+        "regime_risk_adj": 0.0,
         "sector_strength": round(_seeded_float(ticker, "sector", 40, 90), 0),
         "ml_bullish_prob": round(_seeded_float(ticker, "ml", 0.35, 0.72), 2),
+        "ml_confidence": round(_seeded_float(ticker, "mlconf", 0.1, 0.6), 2),
+        "ml_direction": "bullish",
         "data_provider": "mock-sync",
     }

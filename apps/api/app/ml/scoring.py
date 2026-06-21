@@ -1,14 +1,15 @@
 """Multi-factor scoring — combines technical, macro, sentiment, ML signals."""
 
+from app.core.config import settings
 from app.ml.features import compute_ticker_features
 
 
 WEIGHTS = {
-    "technical": 0.30,
-    "fundamental": 0.20,
+    "technical": 0.28,
+    "fundamental": 0.17,
     "news": 0.15,
-    "macro": 0.15,
-    "ml": 0.10,
+    "macro": 0.12,
+    "ml": 0.18,
     "risk": 0.10,
 }
 
@@ -30,8 +31,16 @@ def score_ticker(features: dict | None = None, ticker: str = "") -> dict:
         20,
         80,
     )
-    ml = _clamp(float(features["ml_bullish_prob"]) * 100)
-    risk = _clamp(100 - float(features["atr_percent"]) * 8 - max(0, float(features["vix_change"]) * 3))
+    ml_prob = float(features.get("ml_bullish_prob", 0.5))
+    ml = _clamp(ml_prob * 100)
+    ml_confidence = float(features.get("ml_confidence", abs(ml_prob - 0.5) * 2))
+    vol_prob = float(features.get("ml_vol_prob", 0))
+    risk = _clamp(
+        100
+        - float(features["atr_percent"]) * 8
+        - max(0, float(features["vix_change"]) * 3)
+        - vol_prob * settings.ml_vol_score_penalty
+    )
 
     components = {
         "technical": round(technical, 1),
@@ -56,4 +65,19 @@ def score_ticker(features: dict | None = None, ticker: str = "") -> dict:
     else:
         label = "Sell / Reduce"
 
-    return {"composite": composite, "label": label, "components": components}
+    direction = features.get("ml_direction")
+    if not direction:
+        if ml_prob >= 0.55:
+            direction = "bullish"
+        elif ml_prob <= 0.45:
+            direction = "bearish"
+        else:
+            direction = "neutral"
+
+    return {
+        "composite": composite,
+        "label": label,
+        "components": components,
+        "ml_confidence": round(ml_confidence, 2),
+        "ml_direction": direction,
+    }

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from app.core.config import settings
 from app.ml.scoring import score_ticker
 from app.portfolio.demo import demo_portfolio
 from app.risk.rules import RiskRules, default_rules
@@ -44,6 +45,44 @@ class RiskEngine:
             )
         return blocks
 
+    def _ml_hybrid_warnings(
+        self,
+        side: str | None,
+        features: dict,
+        scores: dict,
+    ) -> list[str]:
+        if not side:
+            return []
+        warnings: list[str] = []
+        ml_prob = float(features.get("ml_bullish_prob", 0.5))
+        ml_confidence = float(scores.get("ml_confidence", features.get("ml_confidence", 0)))
+        model_version = int(features.get("ml_model_version", 0))
+
+        side_lower = side.lower()
+        if side_lower == "buy" and ml_prob < settings.ml_bullish_buy_min:
+            warnings.append(
+                f"ML model is not bullish ({ml_prob:.0%}) — review thesis before buying."
+            )
+        if side_lower == "sell" and ml_prob > settings.ml_bullish_sell_max:
+            warnings.append(
+                f"ML model remains bullish ({ml_prob:.0%}) — confirm sell rationale."
+            )
+        if settings.ml_bullish_buy_min <= ml_prob <= settings.ml_bullish_sell_max:
+            warnings.append(f"Low ML conviction near 50/50 ({ml_prob:.0%}).")
+        if ml_confidence < settings.ml_low_confidence_threshold and model_version < 2:
+            warnings.append("ML model still in bootstrap — treat signal as low confidence.")
+        return warnings
+
+    def _volatility_ml_warnings(self, regime: dict | None) -> list[str]:
+        if not regime or not settings.ml_volatility_enabled:
+            return []
+        prob = float(regime.get("ml_vol_prob", 0))
+        if prob >= settings.ml_vol_high_threshold:
+            return [
+                f"ML volatility model elevated ({prob:.0%}) — reduce size and expect wider swings."
+            ]
+        return []
+
     def evaluate_ticker(
         self,
         ticker: str,
@@ -51,6 +90,7 @@ class RiskEngine:
         scores: dict,
         portfolio: dict | None = None,
         regime: dict | None = None,
+        side: str | None = None,
     ) -> RiskVerdict:
         warnings: list[str] = []
         blocks: list[str] = []
@@ -107,6 +147,9 @@ class RiskEngine:
                     f"Macro regime adjusted setup score by {adj} pts (now "
                     f"{max(0, composite + adj):.0f}/100 effective)."
                 )
+
+        warnings.extend(self._ml_hybrid_warnings(side, features, scores))
+        warnings.extend(self._volatility_ml_warnings(regime))
 
         if blocks:
             verdict = "BLOCK"
@@ -182,13 +225,21 @@ class RiskEngine:
             blocks.append("Market orders are blocked for volatile names — use limit orders.")
 
         features = await compute_ticker_features(ticker)
+        from app.ml.model_registry import load_meta
+
+        meta = load_meta()
+        features["ml_model_version"] = meta.get("version", 0)
         scores = score_ticker(features, ticker)
-        ticker_verdict = self.evaluate_ticker(ticker, features, scores, portfolio=portfolio)
+        ticker_verdict = self.evaluate_ticker(
+            ticker, features, scores, portfolio=portfolio, side=side
+        )
         warnings.extend(ticker_verdict.warnings)
         blocks.extend(ticker_verdict.blocks)
 
         allowed = len(blocks) == 0
         verdict = "BLOCK" if blocks else ("CAUTION" if warnings else "ALLOW")
+
+        from app.ml.snapshot import build_ml_snapshot
 
         return {
             "allowed": allowed,
@@ -205,6 +256,10 @@ class RiskEngine:
             "limit_price": limit_price,
             "setup_label": scores["label"],
             "composite_score": scores["composite"],
+            "ml_bullish_prob": features.get("ml_bullish_prob"),
+            "ml_confidence": features.get("ml_confidence"),
+            "ml_model_version": features.get("ml_model_version"),
+            "ml_snapshot": build_ml_snapshot(features, scores),
         }
 
     async def portfolio_snapshot(self) -> dict:

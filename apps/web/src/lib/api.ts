@@ -225,11 +225,50 @@ export type MacroRegime = {
 export type MLModelStatus = {
   model_exists: boolean;
   version: number;
+  model_type?: string;
   last_trained_at?: string;
   source?: string;
   accuracy?: number;
+  auc?: number;
+  brier?: number;
+  deploy_gate_passed?: boolean;
+  feature_importance?: Record<string, number>;
+  walk_forward_folds?: number;
+  samples?: number;
   journal_trades_used?: number;
+  journal_retrain_enabled?: boolean;
   min_trades_required?: number;
+  history_versions?: number;
+  volatility?: {
+    enabled?: boolean;
+    model_exists?: boolean;
+    version?: number;
+    model_type?: string;
+    last_trained_at?: string;
+    auc?: number;
+    accuracy?: number;
+    feature_importance?: Record<string, number>;
+    high_threshold?: number;
+  };
+};
+
+export type MLModelHistoryEntry = {
+  version: number;
+  model_type?: string;
+  auc?: number;
+  accuracy?: number;
+  brier?: number;
+  source?: string;
+  last_trained_at?: string;
+  journal_trades_used?: number;
+  archived_at?: string;
+  active?: boolean;
+  artifact_exists?: boolean;
+};
+
+export type MLModelHistory = {
+  active: Record<string, unknown>;
+  versions: MLModelHistoryEntry[];
 };
 
 export type Readiness = {
@@ -550,9 +589,25 @@ export async function retrainMLModel(): Promise<{
   status: string;
   version?: number;
   accuracy?: number;
+  auc?: number;
   journal_trades_used?: number;
+  source?: string;
+  reason?: string;
 }> {
   return fetchJson("/api/intelligence/ml/retrain", { method: "POST" });
+}
+
+export async function getMLModelHistory(): Promise<MLModelHistory> {
+  return fetchJson<MLModelHistory>("/api/intelligence/ml/history");
+}
+
+export async function rollbackMLModel(version: number): Promise<{
+  status: string;
+  version?: number;
+  meta?: Record<string, unknown>;
+  reason?: string;
+}> {
+  return fetchJson(`/api/intelligence/ml/rollback/${version}`, { method: "POST" });
 }
 
 export async function getTickerNews(ticker: string): Promise<TickerAnalysis["news"]> {
