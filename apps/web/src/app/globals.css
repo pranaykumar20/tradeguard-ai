@@ -201,6 +201,18 @@ body {
   border: 1px solid rgba(38, 228, 196, 0.22);
 }
 
+.tg-chat-md > :first-child {
+  margin-top: 0;
+}
+
+.tg-chat-md > :last-child {
+  margin-bottom: 0;
+}
+
+.tg-chat-md > p:first-child strong {
+  font-size: 15px;
+}
+
 .tg-bubble-user {
   padding: 14px 16px;
   border-radius: 18px;

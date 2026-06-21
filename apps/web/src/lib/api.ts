@@ -1,3 +1,7 @@
+import type { StructuredReply, ChatQuote } from "@/lib/chat-types";
+
+export type { StructuredReply, ChatQuote } from "@/lib/chat-types";
+
 function resolveApiBase(): string {
   const raw = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
   if (!raw) return "";
@@ -24,7 +28,10 @@ export function setAuthTokenGetter(getter: TokenGetter | null) {
 
 export type ChatResponse = {
   session_id: string;
+  message_id?: string | null;
   reply: string;
+  narrative?: string | null;
+  structured?: StructuredReply | null;
   decision: string;
   risk_verdict: string;
   warnings: string[];
@@ -33,7 +40,16 @@ export type ChatResponse = {
   rag_sources?: RagSource[];
   rag_tools?: string[];
   web_sources?: WebSource[];
+  quote?: ChatQuote;
 };
+
+export type ChatStreamEvent =
+  | { type: "status"; message: string }
+  | { type: "structured"; data: StructuredReply | null }
+  | { type: "token"; content: string }
+  | { type: "done"; data: ChatResponse };
+
+export type ChatFeedbackRating = "up" | "down";
 
 export type WebSource = {
   title: string;
@@ -324,6 +340,76 @@ export async function sendChat(message: string, sessionId?: string): Promise<Cha
   return fetchJson<ChatResponse>("/api/chat", {
     method: "POST",
     body: JSON.stringify({ message, session_id: sessionId }),
+  });
+}
+
+export async function sendChatStream(
+  message: string,
+  sessionId: string | undefined,
+  handlers: {
+    onEvent: (event: ChatStreamEvent) => void;
+    signal?: AbortSignal;
+  },
+): Promise<ChatResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authTokenGetter) {
+    const token = await authTokenGetter();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_BASE}/api/chat/stream`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ message, session_id: sessionId }),
+    signal: handlers.signal,
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(`API /api/chat/stream failed: ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResponse: ChatResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+
+    for (const chunk of chunks) {
+      const line = chunk.trim();
+      if (!line.startsWith("data:")) continue;
+      const payload = JSON.parse(line.slice(5).trim()) as ChatStreamEvent;
+      handlers.onEvent(payload);
+      if (payload.type === "done") {
+        finalResponse = payload.data;
+      }
+    }
+  }
+
+  if (!finalResponse) {
+    throw new Error("Stream ended without a final response");
+  }
+  return finalResponse;
+}
+
+export async function submitChatFeedback(
+  sessionId: string,
+  rating: ChatFeedbackRating,
+  messageId?: string | null,
+): Promise<void> {
+  await fetchJson("/api/chat/feedback", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: sessionId,
+      message_id: messageId,
+      rating,
+    }),
   });
 }
 
