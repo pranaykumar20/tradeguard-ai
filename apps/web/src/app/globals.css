@@ -36,6 +36,7 @@
   --color-red: var(--red);
   --color-orange: var(--orange);
   --color-blue: var(--blue);
+  --color-purple: #a78bfa;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -254,4 +255,16 @@ body {
 .tg-scroll::-webkit-scrollbar-thumb {
   background: #2a3544;
   border-radius: 999px;
+}
+
+.dash-card {
+  background: linear-gradient(180deg, rgba(16, 35, 58, 0.92), rgba(9, 21, 36, 0.96));
+  border: 1px solid rgba(32, 54, 82, 0.9);
+  border-radius: 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
+.dash-card-ai {
+  border-color: rgba(167, 139, 250, 0.28);
+  background: linear-gradient(180deg, rgba(88, 56, 163, 0.18), rgba(9, 21, 36, 0.96));
 }

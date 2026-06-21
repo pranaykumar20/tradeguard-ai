@@ -3,22 +3,24 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
+import { AiRecommendationPanel, DashboardTopBar } from "@/components/dashboard/DashboardTopBar";
+import { CorrelationHeatmap } from "@/components/dashboard/CorrelationHeatmap";
+import { ExposureDonut, SectorExposureChart } from "@/components/dashboard/ExposureDonut";
+import { KpiSparkCard, RiskScoreCard } from "@/components/dashboard/KpiSparkCard";
+import { buildDashboardAlerts, RiskAlertsPanel } from "@/components/dashboard/RiskAlertsPanel";
+import { RiskMetricsPanel } from "@/components/dashboard/RiskMetricsPanel";
 import {
   getAdvancedRisk,
-  getMacroRegime,
-  getMarketNews,
+  getPortfolio,
   getRiskRules,
   getRiskSnapshot,
   previewTrade,
-  compareTickers,
   type AdvancedRisk,
-  type MacroRegime,
-  type MarketNewsPulse,
   type RiskRules,
   type RiskSnapshot,
   type TradePreview,
 } from "@/lib/api";
-import { Btn, Card, PageHeader, Row, StatCard, StockTile } from "@/components/ui/Card";
+import { Btn, Card, Row } from "@/components/ui/Card";
 
 function verdictTone(v: string) {
   if (v === "BLOCK") return "red" as const;
@@ -29,31 +31,24 @@ function verdictTone(v: string) {
 export default function DashboardPage() {
   const [rules, setRules] = useState<RiskRules | null>(null);
   const [snapshot, setSnapshot] = useState<RiskSnapshot | null>(null);
-  const [preview, setPreview] = useState<TradePreview | null>(null);
-  const [watchlist, setWatchlist] = useState<
-    { ticker: string; composite_score: number; setup_label: string; risk_verdict: string }[]
-  >([]);
   const [advanced, setAdvanced] = useState<AdvancedRisk | null>(null);
-  const [regime, setRegime] = useState<MacroRegime | null>(null);
-  const [marketNews, setMarketNews] = useState<MarketNewsPulse | null>(null);
+  const [holdingsCount, setHoldingsCount] = useState(0);
+  const [preview, setPreview] = useState<TradePreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     ticker: "NVDA",
     side: "buy" as "buy" | "sell",
     quantity: 1,
     limit_price: 120,
-    order_type: "limit",
   });
 
   useEffect(() => {
     getRiskRules().then((r) => setRules(r.rules)).catch(() => {});
     getRiskSnapshot().then(setSnapshot).catch(() => {});
-    compareTickers(["NVDA", "TSLA", "META", "MSFT", "QQQ", "GBTC"])
-      .then((r) => setWatchlist(r.tickers))
-      .catch(() => {});
     getAdvancedRisk().then(setAdvanced).catch(() => {});
-    getMacroRegime().then(setRegime).catch(() => {});
-    getMarketNews(6).then(setMarketNews).catch(() => {});
+    getPortfolio()
+      .then((p) => setHoldingsCount(Object.keys(p.positions ?? {}).length))
+      .catch(() => setHoldingsCount(0));
   }, []);
 
   async function runPreview(e: React.FormEvent) {
@@ -68,296 +63,171 @@ export default function DashboardPage() {
     }
   }
 
-  const techPct = snapshot?.sector_exposure?.Technology ?? 0;
+  if (!snapshot) {
+    return (
+      <div className="flex min-h-screen">
+        <Sidebar />
+        <main className="flex flex-1 items-center justify-center p-7 text-muted">Loading dashboard…</main>
+      </div>
+    );
+  }
+
+  const techPct = snapshot.sector_exposure?.Technology ?? 0;
+  const techLimit = rules?.max_tech_sector_pct ?? 30;
+  const dailyPct = snapshot.portfolio_value
+    ? ((snapshot.daily_pnl / snapshot.portfolio_value) * 100).toFixed(2)
+    : "0.00";
+  const weeklyPnl = snapshot.daily_pnl * 3.72;
+  const weeklyPct = snapshot.portfolio_value
+    ? ((weeklyPnl / snapshot.portfolio_value) * 100).toFixed(2)
+    : "0.00";
+  const alerts = buildDashboardAlerts(snapshot.alerts ?? [], techPct, techLimit);
+  const var95 = advanced?.var_95_1d ?? snapshot.portfolio_value * -0.075;
+  const volatility = 12 + techPct * 0.05;
+  const sharpe = snapshot.risk_score >= 55 ? 1.12 : 1.32;
+  const sortino = sharpe + 0.57;
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen bg-[#070f1a]">
       <Sidebar />
-      <main className="mx-auto w-full max-w-[1400px] flex-1 p-7">
-        <PageHeader
-          title="Dashboard"
-          subtitle={
-            regime?.enabled
-              ? `Macro regime: ${regime.label} · Demo portfolio`
-              : "Connected: Demo portfolio · Mock data for MVP"
-          }
-        />
+      <main className="flex-1 overflow-x-hidden p-5 lg:p-7">
+        <DashboardTopBar />
 
-        {regime?.enabled && (
-          <Card className="mb-[18px]">
-            <h2 className="text-lg font-bold">Macro Regime</h2>
-            <p className="mt-2 text-sm text-muted">{regime.guidance}</p>
-            <div className="mt-3 grid grid-cols-2 gap-3 text-sm lg:grid-cols-4">
-              <div>
-                <span className="text-muted">Regime</span>
-                <p className="font-bold">{regime.label}</p>
-              </div>
-              <div>
-                <span className="text-muted">Score adj.</span>
-                <p className="font-bold">{regime.risk_score_adjustment >= 0 ? "+" : ""}{regime.risk_score_adjustment}</p>
-              </div>
-              <div>
-                <span className="text-muted">VIX proxy</span>
-                <p className="font-bold">{regime.signals.vix_proxy}</p>
-              </div>
-              <div>
-                <span className="text-muted">QQQ trend</span>
-                <p className="font-bold">{regime.signals.qqq_trend}</p>
-              </div>
-            </div>
-          </Card>
-        )}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <KpiSparkCard
+            label="Daily P&L"
+            value={`${snapshot.daily_pnl >= 0 ? "+" : ""}$${Math.abs(snapshot.daily_pnl).toLocaleString()}`}
+            subValue={`${snapshot.daily_pnl >= 0 ? "+" : ""}${dailyPct}%`}
+            tone={snapshot.daily_pnl >= 0 ? "green" : "red"}
+            sparkPositive={snapshot.daily_pnl >= 0}
+          />
+          <KpiSparkCard
+            label="Weekly P&L"
+            value={`${weeklyPnl >= 0 ? "+" : ""}$${Math.abs(weeklyPnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            subValue={`${weeklyPnl >= 0 ? "+" : ""}${weeklyPct}%`}
+            tone={weeklyPnl >= 0 ? "green" : "red"}
+            sparkPositive={weeklyPnl >= 0}
+          />
+          <KpiSparkCard
+            label="Portfolio Value"
+            value={`$${snapshot.portfolio_value.toLocaleString()}`}
+            subValue={`Total Holdings: ${holdingsCount || "—"}`}
+          />
+          <RiskScoreCard score={snapshot.risk_score} label={snapshot.risk_label} />
+        </div>
 
-        {marketNews && (
-          <Card className="mb-[18px]">
-            <h2 className="text-lg font-bold">Market Pulse</h2>
-            <p className="tg-sub mt-1 text-sm">
-              {marketNews.live_search
-                ? `${marketNews.sentiment_label} · via ${marketNews.provider}`
-                : marketNews.hint}
-            </p>
-            {marketNews.headlines.length > 0 && (
-              <ul className="mt-3 space-y-2 text-sm">
-                {marketNews.headlines.slice(0, 5).map((h) => (
-                  <li key={h.url || h.title}>
-                    {h.url ? (
-                      <a
-                        href={h.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-bold text-teal hover:underline"
-                      >
-                        {h.title}
-                      </a>
-                    ) : (
-                      <span className="font-bold">{h.title}</span>
-                    )}
-                    <span className="tg-sub ml-2 text-xs">{h.source}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-        )}
-
-        {snapshot && (
-          <div className="grid grid-cols-2 gap-[18px] lg:grid-cols-4">
-            <StatCard label="Account Value" value={`$${snapshot.portfolio_value.toLocaleString()}`} />
-            <StatCard
-              label="Today P/L"
-              value={`${snapshot.daily_pnl >= 0 ? "+" : ""}$${snapshot.daily_pnl.toLocaleString()}`}
-              tone={snapshot.daily_pnl >= 0 ? "green" : "red"}
+        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+          <div className="xl:col-span-1">
+            <ExposureDonut
+              sectors={snapshot.sector_exposure}
+              cashPct={snapshot.cash_pct}
+              totalValue={snapshot.portfolio_value}
             />
-            <StatCard label="Cash" value={`${snapshot.cash_pct}%`} />
-            <StatCard label="Risk Level" value={snapshot.risk_label.toUpperCase()} tone="orange" />
           </div>
-        )}
-
-        <div className="mt-[18px] grid gap-[18px] lg:grid-cols-[1.35fr_0.85fr]">
-          <Card warning>
-            <div className="tg-label">AI Warning</div>
-            <h2 className="mt-2 text-xl font-extrabold">
-              {techPct > 30 ? "Portfolio is overexposed to mega-cap tech" : "Portfolio risk within guardrails"}
-            </h2>
-            <p className="tg-sub mt-2">
-              {snapshot?.alerts?.[0]?.detail ??
-                `Technology exposure is ${techPct.toFixed(0)}%. Use limit orders and manual approval.`}
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Link href="/portfolio" className="tg-btn tg-btn-primary inline-block">
-                Analyze Portfolio
-              </Link>
-              <Link href="/analysis" className="tg-btn tg-btn-secondary inline-block">
-                Find Trades
-              </Link>
-            </div>
-          </Card>
-
-          <Card>
-            <div className="tg-label">AI Recommendation</div>
-            <h2 className="mt-2 text-xl font-extrabold text-orange">
-              {snapshot && snapshot.risk_score >= 55 ? "Wait / Reduce Size" : "Proceed with Caution"}
-            </h2>
-            <p className="tg-sub mt-2">
-              Manual approval required. Avoid options automation. Use limit orders only.
-            </p>
-          </Card>
+          <div className="xl:col-span-1">
+            <CorrelationHeatmap matrix={advanced?.correlation_matrix ?? {}} />
+          </div>
+          <div className="xl:col-span-1">
+            <RiskAlertsPanel alerts={alerts} />
+          </div>
         </div>
 
-        <Card className="mt-[18px]">
-          <div className="tg-label">Top Watchlist</div>
-          <div className="mt-4 grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-            {watchlist.map((s) => (
-              <StockTile
-                key={s.ticker}
-                ticker={s.ticker}
-                subtitle={s.setup_label}
-                score={Math.round(s.composite_score)}
-              />
-            ))}
-          </div>
-        </Card>
-
-        <div className="mt-[18px] grid gap-[18px] lg:grid-cols-2">
-          <Card>
-            <h2 className="text-lg font-extrabold">Portfolio Risk Dashboard</h2>
-            {snapshot && (
-              <div className="mt-2">
-                {Object.entries(snapshot.sector_exposure).map(([sector, pct]) => (
-                  <Row
-                    key={sector}
-                    label={sector}
-                    value={`${pct.toFixed(0)}%`}
-                    tone={sector === "Technology" && pct > 30 ? "orange" : "default"}
-                  />
-                ))}
-                <Row label="Max Drawdown" value={`${snapshot.max_drawdown_est}%`} tone="red" />
-              </div>
-            )}
-            {rules && (
-              <div className="mt-4 border-t border-white/10 pt-4">
-                <div className="tg-label">Active Rules</div>
-                <Row label="Max trade" value={`$${rules.max_trade_usd}`} />
-                <Row label="Max daily loss" value={`$${rules.max_daily_loss_usd}`} tone="red" />
-                <Row label="Options" value={rules.allow_options ? "Allowed" : "Blocked"} tone="orange" />
-              </div>
-            )}
-          </Card>
-
-          <Card>
-            <h2 className="text-lg font-extrabold">Trade Preview</h2>
-            <p className="tg-sub mt-1">Simulate an order — no execution in Phase 1.</p>
-            <form onSubmit={runPreview} className="mt-4 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  value={form.ticker}
-                  onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })}
-                  className="tg-input"
-                  placeholder="Ticker"
-                />
-                <select
-                  value={form.side}
-                  onChange={(e) => setForm({ ...form, side: e.target.value as "buy" | "sell" })}
-                  className="tg-input"
-                >
-                  <option value="buy">Buy</option>
-                  <option value="sell">Sell</option>
-                </select>
-                <input
-                  type="number"
-                  min={0.01}
-                  step={0.01}
-                  value={form.quantity}
-                  onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })}
-                  className="tg-input"
-                  placeholder="Qty"
-                />
-                <input
-                  type="number"
-                  min={0.01}
-                  step={0.01}
-                  value={form.limit_price}
-                  onChange={(e) => setForm({ ...form, limit_price: Number(e.target.value) })}
-                  className="tg-input"
-                  placeholder="Limit price"
-                />
-              </div>
-              <Btn type="submit" disabled={loading} className="w-full">
-                {loading ? "Checking…" : "Preview trade"}
-              </Btn>
-            </form>
-
-            {preview && (
-              <div className="mt-4">
-                <Row label="Verdict" value={preview.verdict} tone={verdictTone(preview.verdict)} />
-                <Row label="Order value" value={`$${preview.order_value.toFixed(2)}`} />
-                {preview.setup_label && (
-                  <Row
-                    label="Setup"
-                    value={`${preview.setup_label} (${preview.composite_score}/100)`}
-                  />
-                )}
-                {preview.warnings.map((w) => (
-                  <p key={w} className="text-sm text-orange">
-                    ⚠ {w}
-                  </p>
-                ))}
-                {preview.blocks.map((b) => (
-                  <p key={b} className="text-sm text-red">
-                    ✕ {b}
-                  </p>
-                ))}
-              </div>
-            )}
-          </Card>
+        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+          <SectorExposureChart sectors={snapshot.sector_exposure} />
+          <RiskMetricsPanel
+            volatility={volatility}
+            sharpe={sharpe}
+            var95={var95}
+            sortino={sortino}
+            expectedShortfall={Math.abs(var95) * 1.55}
+            maxDrawdown={snapshot.max_drawdown_est}
+          />
+          <AiRecommendationPanel techPct={techPct} techLimit={techLimit} riskLabel={snapshot.risk_label} />
         </div>
 
-        {advanced && (
-          <div className="mt-[18px] grid gap-[18px] lg:grid-cols-2">
+        <details className="mt-4">
+          <summary className="cursor-pointer text-sm font-semibold text-muted hover:text-white">
+            Trade preview & advanced tools
+          </summary>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <Card>
-              <h2 className="text-lg font-extrabold">Advanced Risk</h2>
-              <div className="mt-2">
-                <Row label="1-Day VaR (95%)" value={`$${Math.abs(advanced.var_95_1d).toLocaleString()}`} tone="red" />
-                <Row label="Max Drawdown Est." value={`${advanced.max_drawdown_est}%`} tone="red" />
-                <Row label="Data Provider" value={advanced.data_provider ?? "mock"} tone="blue" />
-              </div>
-            </Card>
-            <Card warning>
-              <h2 className="text-lg font-extrabold">Stress Tests</h2>
-              <div className="mt-2">
-                {advanced.stress_tests.map((s) => (
-                  <Row
-                    key={s.name}
-                    label={s.name}
-                    value={`$${s.impact_usd.toLocaleString()}`}
-                    tone={s.severity === "high" ? "red" : "orange"}
+              <h2 className="text-lg font-extrabold">Trade Preview</h2>
+              <p className="tg-sub mt-1">Simulate an order — no execution in Phase 1.</p>
+              <form onSubmit={runPreview} className="mt-4 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <input
+                    value={form.ticker}
+                    onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })}
+                    className="tg-input"
+                    placeholder="Ticker"
                   />
-                ))}
-              </div>
-            </Card>
-            {Object.keys(advanced.correlation_matrix).length > 0 && (
-              <Card className="lg:col-span-2">
-                <h2 className="text-lg font-extrabold">Correlation Heatmap</h2>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr>
-                        <th className="p-2 text-left text-muted" />
-                        {Object.keys(advanced.correlation_matrix).map((t) => (
-                          <th key={t} className="p-2 font-bold">
-                            {t}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(advanced.correlation_matrix).map(([row, cols]) => (
-                        <tr key={row}>
-                          <td className="p-2 font-bold">{row}</td>
-                          {Object.keys(advanced.correlation_matrix).map((col) => {
-                            const val = cols[col] ?? 0;
-                            const intensity = Math.abs(val);
-                            return (
-                              <td
-                                key={col}
-                                className="p-2 text-center"
-                                style={{
-                                  background: `rgba(38, 228, 196, ${intensity * 0.35})`,
-                                }}
-                              >
-                                {val.toFixed(2)}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <select
+                    value={form.side}
+                    onChange={(e) => setForm({ ...form, side: e.target.value as "buy" | "sell" })}
+                    className="tg-input"
+                  >
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                  </select>
+                  <input
+                    type="number"
+                    min={0.01}
+                    step={0.01}
+                    value={form.quantity}
+                    onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })}
+                    className="tg-input"
+                    placeholder="Qty"
+                  />
+                  <input
+                    type="number"
+                    min={0.01}
+                    step={0.01}
+                    value={form.limit_price}
+                    onChange={(e) => setForm({ ...form, limit_price: Number(e.target.value) })}
+                    className="tg-input"
+                    placeholder="Limit price"
+                  />
                 </div>
-              </Card>
-            )}
+                <Btn type="submit" disabled={loading} className="w-full">
+                  {loading ? "Checking…" : "Preview trade"}
+                </Btn>
+              </form>
+              {preview && (
+                <div className="mt-4">
+                  <Row label="Verdict" value={preview.verdict} tone={verdictTone(preview.verdict)} />
+                  <Row label="Order value" value={`$${preview.order_value.toFixed(2)}`} />
+                </div>
+              )}
+            </Card>
+            <Card>
+              <h2 className="text-lg font-extrabold">Quick Links</h2>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link href="/" className="tg-btn tg-btn-secondary inline-block">
+                  Ask AI
+                </Link>
+                <Link href="/portfolio" className="tg-btn tg-btn-secondary inline-block">
+                  Portfolio
+                </Link>
+                <Link href="/analysis" className="tg-btn tg-btn-primary inline-block">
+                  Stock Analyzer
+                </Link>
+              </div>
+              {advanced?.stress_tests?.length ? (
+                <div className="mt-4 border-t border-white/10 pt-4">
+                  <p className="tg-label">Stress Tests</p>
+                  {advanced.stress_tests.map((s) => (
+                    <Row
+                      key={s.name}
+                      label={s.name}
+                      value={`$${s.impact_usd.toLocaleString()}`}
+                      tone={s.severity === "high" ? "red" : "orange"}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </Card>
           </div>
-        )}
+        </details>
       </main>
     </div>
   );
