@@ -148,6 +148,13 @@ Then open your Vercel app — dashboard and chat should load against Railway.
 
 Every push to `main` that touches `apps/api` triggers a Railway rebuild (if GitHub deploy is enabled). CI also builds the Docker image on GitHub Actions.
 
+**Database migrations** run automatically before each deploy via `preDeployCommand = "alembic upgrade head"` in `apps/api/railway.toml`. To run locally:
+
+```bash
+cd apps/api
+alembic upgrade head
+```
+
 Health check path: `/health` (configured in `apps/api/railway.toml`).
 
 ---
@@ -161,6 +168,7 @@ Health check path: `/health` (configured in `apps/api/railway.toml`).
 | `ready` fails / DB errors | Confirm `DATABASE_URL` reference; Postgres service running |
 | `CREATE EXTENSION vector` fails | Railway Postgres may need pgvector — open a Railway support ticket or use a pgvector-enabled Postgres template |
 | Chat returns template text | Set `CURSOR_API_KEY` + `CURSOR_CLOUD_REPO_URL`, or `OPENAI_API_KEY` with `LLM_PROVIDER=openai` |
+| `column users.role does not exist` | Redeploy after pulling latest `main` — Alembic adds RBAC columns in pre-deploy. Or run `cd apps/api && alembic upgrade head` against production `DATABASE_URL`. |
 | Build fails | Check **Deploy Logs**; ensure root directory is `apps/api` |
 | `npm could not be found` on startup | API service → **Settings** → **Deploy** → clear **Custom Start Command**; redeploy. Root must be `apps/api`, not repo root. |
 | Railway runs `npm run start --workspace=web` | Same fix — Railway guessed the monorepo web app. Use `apps/api` root + empty/correct start command. |
