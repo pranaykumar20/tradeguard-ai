@@ -1,0 +1,45 @@
+---
+description: Robinhood OAuth, MCP, and production deploy guardrails for Railway and Vercel
+globs: apps/api/app/services/robinhood_connect.py,apps/api/app/api/routes/brokers.py,docs/MCP-SETUP.md,docs/RAILWAY.md
+alwaysApply: false
+---
+
+# MCP & OAuth Production
+
+## Required Railway env vars
+
+| Variable | Purpose |
+|----------|---------|
+| `API_PUBLIC_URL` | Public API base — OAuth callback host |
+| `FRONTEND_URL` | Redirect after OAuth (onboarding) |
+| `CORS_ORIGINS` | Comma-separated Vercel origin(s) |
+| `SECRETS_ENCRYPTION_KEY` | Fernet key for OAuth tokens at rest |
+
+OAuth callback URL: `{API_PUBLIC_URL}/api/brokers/robinhood/callback`
+
+## Vercel
+
+- `NEXT_PUBLIC_API_URL` = Railway domain (no trailing slash)
+- Redeploy after env changes
+
+## Debugging CORS
+
+Browser CORS errors often mean the API returned **500 without CORS headers**, not a missing origin. Check Railway logs first.
+
+```bash
+curl -s -X POST "$API_PUBLIC_URL/api/brokers/robinhood/connect" \
+  -H "Content-Type: application/json" \
+  -d '{"return_path":"/onboarding"}'
+```
+
+Expect JSON with `authorization_url`, not `Internal Server Error`.
+
+## Token storage
+
+- Per-user tokens in broker account `meta.mcp` — encrypted via `apps/api/app/core/secrets.py`.
+- Global OAuth client registration stored in `app_state` under user `_global`.
+
+## Do not
+
+- Commit `SECRETS_ENCRYPTION_KEY` or OAuth tokens.
+- Use `localhost` callback URL in production (`API_PUBLIC_URL` must be set).

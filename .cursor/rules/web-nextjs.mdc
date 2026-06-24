@@ -1,0 +1,34 @@
+---
+description: Next.js frontend conventions — API client, approvals, onboarding, auth
+globs: apps/web/**
+alwaysApply: false
+---
+
+# TradeGuard Web (Next.js)
+
+See also `apps/web/AGENTS.md` for Next.js version-specific notes.
+
+## API client
+
+- `apps/web/src/lib/api.ts` — all backend calls via `fetchJson`.
+- `NEXT_PUBLIC_API_URL` set → browser calls Railway directly (cross-origin, needs CORS).
+- `NEXT_PUBLIC_API_URL` unset → same-origin `/api/*` proxied by `next.config.ts` rewrites.
+
+Prefer same-origin rewrites in dev to avoid CORS masking server errors.
+
+## Key routes
+
+- `/approvals` — manual trade approval queue
+- `/onboarding` — Robinhood OAuth connect wizard
+- `/journal` — trade log
+- `/strategies` — semi-auto rules
+
+## Auth
+
+- Clerk optional; when disabled, demo user via `X-Demo-User-Email` cookie.
+- `setAuthTokenGetter` in `api.ts` wires Clerk JWT when configured.
+
+## UI patterns
+
+- Risk verdicts render from structured API responses — do not parse LLM markdown for metrics.
+- Show clear BLOCK / CAUTION / ALLOW states matching backend enums.

@@ -1,0 +1,37 @@
+---
+description: FastAPI and Python conventions for apps/api — scoping, storage, providers, config
+globs: apps/api/**/*.py
+alwaysApply: false
+---
+
+# TradeGuard API (Python)
+
+## Layout
+
+- `apps/api/app/main.py` — FastAPI app, CORS, lifespan
+- `apps/api/app/core/` — config, auth, middleware, user context
+- `apps/api/app/api/routes/` — HTTP routes
+- `apps/api/app/services/` — business logic
+- `apps/api/app/risk/` — risk engine (veto power)
+- `apps/api/app/agents/` — orchestrator + LLM
+
+## User scoping
+
+- `UserContextMiddleware` sets per-request user id via `resolve_request_user_id`.
+- Use `get_current_user_id()` / `user_scope()` from `app/core/user_context.py`.
+- Global OAuth state uses `GLOBAL_USER_ID = "_global"` in `robinhood_connect.py`.
+
+## Storage
+
+- Call `get_storage()` only after `init_storage()` in app lifespan.
+- `app_state.key` is VARCHAR(64) — keep composite keys under 64 chars.
+- Postgres backend: `STORAGE_BACKEND=postgres` in production.
+
+## Config
+
+- New env vars go in `apps/api/app/core/config.py` and `apps/api/.env.example`.
+- Document production vars in `docs/RAILWAY.md`.
+
+## Provider pattern
+
+Market, embeddings, alerts, and MCP use mock-first `auto` mode. Follow existing provider abstractions — do not require live API keys in dev or tests.

@@ -113,6 +113,13 @@ Configured in `apps/api/app/risk/rules.py`:
 
 See [docs/MCP-SETUP.md](docs/MCP-SETUP.md). Connect from a **desktop browser** only. Fund a separate **Agentic account** — never your main portfolio for v1.
 
+## AI agent contract & policy sync
+
+- **[docs/AGENT-CONTRACT.md](docs/AGENT-CONTRACT.md)** — agent roles, veto boundaries, execution flow
+- **[docs/POLICY-SYNC.md](docs/POLICY-SYNC.md)** — checklist to keep code, playbooks, and prompts aligned
+
+Cursor project skills and rules live in `.cursor/skills/` and `.cursor/rules/` for developers working on this repo.
+
 ## Disclaimer
 
 TradeGuard AI provides analysis and risk tooling, **not financial advice**. Agentic trading can lose your entire investment. AI agents can misread instructions. Always use manual approval and small capital when starting.

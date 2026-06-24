@@ -1,0 +1,28 @@
+---
+description: Rules for editing the risk engine — BLOCK/CAUTION/ALLOW, tests, playbook sync
+globs: apps/api/app/risk/**
+alwaysApply: false
+---
+
+# Risk Engine Changes
+
+## Files
+
+- `apps/api/app/risk/rules.py` — `RiskRules` model
+- `apps/api/app/risk/engine.py` — `RiskEngine` enforcement
+- `apps/api/app/core/config.py` — `RISK_*` settings
+
+## Rules
+
+- `BLOCK` = hard stop (append to `RiskVerdict.blocks`). `CAUTION` = warn only (`warnings`).
+- Never soften a block in the LLM layer or frontend copy.
+- ML signals (`_ml_hybrid_warnings`, `_volatility_ml_warnings`) are warnings only.
+- Defaults: 20% single-name, 30% tech, $250 max trade, $50 daily loss.
+- Any new hard rule needs a unit test in `apps/api/tests/`.
+- Any new user-facing rule needs a matching `docs/playbooks/` section — see `docs/POLICY-SYNC.md`.
+
+## Do not
+
+- Add prompt-only guardrails without code in `RiskEngine`.
+- Move risk evaluation after LLM generation.
+- Auto-approve trades that received `BLOCK`.

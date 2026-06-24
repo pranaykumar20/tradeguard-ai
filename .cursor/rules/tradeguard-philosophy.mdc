@@ -1,0 +1,23 @@
+---
+description: TradeGuard product philosophy — risk manager, not auto-trader; risk engine has veto power
+alwaysApply: true
+---
+
+# TradeGuard Philosophy
+
+TradeGuard AI is a **risk manager**, not an auto-trader. See `docs/PLAN.md` for the phased vision.
+
+## Non-negotiables
+
+- The **risk engine** (`apps/api/app/risk/engine.py`) has **veto power**. `BLOCK` is final.
+- The LLM explains analysis; it never overrides ALLOW / CAUTION / BLOCK.
+- Execution path: chat → orchestrator → risk preview → **manual approval** (`/approvals`) → MCP (`apps/api/app/services/execution.py`).
+- Default posture: allowlisted stocks/ETFs only, options blocked, limit orders preferred, small **Agentic** account — never the user's main brokerage for v1.
+
+## Provider pattern
+
+All external services use mock-first `auto` mode. No API key = mock provider. Do not hard-require live keys in dev or tests. See the provider table in `README.md`.
+
+## When changing behavior
+
+Follow `docs/POLICY-SYNC.md`: update code, playbooks, runtime prompt, and Cursor skills together.

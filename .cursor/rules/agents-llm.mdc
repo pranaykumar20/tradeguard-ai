@@ -1,0 +1,28 @@
+---
+description: LLM orchestrator and prompt safety — narrative only, risk verdict is final
+globs: apps/api/app/agents/**
+alwaysApply: false
+---
+
+# Agents & LLM
+
+## Roles
+
+- `orchestrator.py` — intent, tool routing, structured response building
+- `llm.py` — narrative generation from context + verdict
+- `llm_validator.py` — grounding and citation checks
+- `response_builder.py` — structured UI payloads
+
+## Rules
+
+- Risk verdict from `RiskEngine` is final — LLM must not contradict ALLOW/CAUTION/BLOCK.
+- LLM adds narrative only; UI renders metrics, tables, and factors from structured data.
+- Ground replies in RAG chunks, live quotes, and risk preview — never invent prices.
+- Trade intent must flow through risk preview before execution-related language.
+- Keep `SYSTEM_PROMPT` aligned with `docs/AGENT-CONTRACT.md` and playbooks.
+
+## Do not
+
+- Duplicate structured UI content in markdown replies.
+- Skip `validate_llm_reply` / grounding checks when adding new chat paths.
+- Move risk evaluation after LLM generation.
