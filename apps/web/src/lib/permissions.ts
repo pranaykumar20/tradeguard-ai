@@ -42,11 +42,10 @@ export const APP_NAV: NavItem[] = [
   { id: "portfolio", href: "/portfolio", label: "Portfolio", icon: "◫", permission: PERMISSIONS.PORTFOLIO },
   {
     id: "risk-analytics",
-    href: "/dashboard#risk-analytics",
+    href: "/risk-analytics",
     label: "Risk Analytics",
     icon: "◉",
     permission: PERMISSIONS.DASHBOARD,
-    activePrefix: "/dashboard",
   },
   { id: "chat", href: "/chat", label: "AI Insights", icon: "✦", permission: PERMISSIONS.CHAT },
   { id: "monitoring", href: "/monitoring", label: "Alerts", icon: "⚑", permission: PERMISSIONS.MONITORING },
@@ -80,6 +79,7 @@ export const APP_NAV: NavItem[] = [
 export const ROUTE_PERMISSIONS: { prefix: string; permission: Permission }[] = [
   { prefix: "/admin", permission: PERMISSIONS.ADMIN },
   { prefix: "/dashboard", permission: PERMISSIONS.DASHBOARD },
+  { prefix: "/risk-analytics", permission: PERMISSIONS.DASHBOARD },
   { prefix: "/portfolio", permission: PERMISSIONS.PORTFOLIO },
   { prefix: "/chat", permission: PERMISSIONS.CHAT },
   { prefix: "/monitoring", permission: PERMISSIONS.MONITORING },

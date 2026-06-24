@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import { AccountRiskWidget } from "@/components/AccountRiskWidget";
 import { SidebarUserMenu } from "@/components/layout/SidebarUserMenu";
 import { useSidebar } from "@/components/layout/SidebarContext";
@@ -49,16 +48,8 @@ function NavLink({
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [hash, setHash] = useState("");
   const { loading, can } = usePermissions();
   const { mobileOpen, closeMobile } = useSidebar();
-
-  useEffect(() => {
-    const syncHash = () => setHash(window.location.hash);
-    syncHash();
-    window.addEventListener("hashchange", syncHash);
-    return () => window.removeEventListener("hashchange", syncHash);
-  }, [pathname]);
 
   const visibleNav = loading
     ? APP_NAV.filter((item) => ["/dashboard", "/portfolio", "/chat"].includes(item.href))
@@ -67,15 +58,6 @@ export function Sidebar() {
   function isActive(item: NavItem) {
     const hrefPath = item.href.split("#")[0];
     const prefix = item.activePrefix ?? hrefPath;
-
-    if (item.id === "risk-analytics") {
-      return pathname === "/dashboard" && hash === "#risk-analytics";
-    }
-
-    if (item.id === "overview") {
-      return pathname === "/dashboard" && hash !== "#risk-analytics";
-    }
-
     return pathname === prefix || pathname.startsWith(`${prefix}/`);
   }
 

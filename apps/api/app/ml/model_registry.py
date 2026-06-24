@@ -70,12 +70,22 @@ def get_model() -> Any | None:
         return _model
     if not MODEL_PATH.exists():
         return None
-    _model = joblib.load(MODEL_PATH)
+    loaded = joblib.load(MODEL_PATH)
+    n_features = getattr(loaded, "n_features_in_", None)
+    if n_features is not None and n_features != len(FEATURE_COLS):
+        return None
+    _model = loaded
     return _model
 
 
 def model_exists() -> bool:
-    return MODEL_PATH.exists()
+    if not MODEL_PATH.exists():
+        return False
+    model = get_model()
+    if model is None:
+        return False
+    n_features = getattr(model, "n_features_in_", None)
+    return n_features == len(FEATURE_COLS) if n_features is not None else True
 
 
 def _load_history() -> list[dict]:

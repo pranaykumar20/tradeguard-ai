@@ -3,20 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppMain } from "@/components/layout/AppMain";
-import { AiRecommendationPanel, DashboardTopBar } from "@/components/dashboard/DashboardTopBar";
-import { CorrelationHeatmap } from "@/components/dashboard/CorrelationHeatmap";
-import { ExposureDonut, SectorExposureChart } from "@/components/dashboard/ExposureDonut";
+import { DashboardTopBar } from "@/components/dashboard/DashboardTopBar";
 import { KpiSparkCard, RiskScoreCard } from "@/components/dashboard/KpiSparkCard";
-import { buildDashboardAlerts, RiskAlertsPanel } from "@/components/dashboard/RiskAlertsPanel";
-import { RiskMetricsPanel } from "@/components/dashboard/RiskMetricsPanel";
 import {
-  getAdvancedRisk,
   getPortfolio,
-  getRiskRules,
   getRiskSnapshot,
   previewTrade,
-  type AdvancedRisk,
-  type RiskRules,
   type RiskSnapshot,
   type TradePreview,
 } from "@/lib/api";
@@ -29,9 +21,7 @@ function verdictTone(v: string) {
 }
 
 export default function DashboardPage() {
-  const [rules, setRules] = useState<RiskRules | null>(null);
   const [snapshot, setSnapshot] = useState<RiskSnapshot | null>(null);
-  const [advanced, setAdvanced] = useState<AdvancedRisk | null>(null);
   const [holdingsCount, setHoldingsCount] = useState(0);
   const [preview, setPreview] = useState<TradePreview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -43,9 +33,7 @@ export default function DashboardPage() {
   });
 
   useEffect(() => {
-    getRiskRules().then((r) => setRules(r.rules)).catch(() => {});
     getRiskSnapshot().then(setSnapshot).catch(() => {});
-    getAdvancedRisk().then(setAdvanced).catch(() => {});
     getPortfolio()
       .then((p) => setHoldingsCount(Object.keys(p.positions ?? {}).length))
       .catch(() => setHoldingsCount(0));
@@ -71,8 +59,6 @@ export default function DashboardPage() {
     );
   }
 
-  const techPct = snapshot.sector_exposure?.Technology ?? 0;
-  const techLimit = rules?.max_tech_sector_pct ?? 30;
   const dailyPct = snapshot.portfolio_value
     ? ((snapshot.daily_pnl / snapshot.portfolio_value) * 100).toFixed(2)
     : "0.00";
@@ -80,11 +66,6 @@ export default function DashboardPage() {
   const weeklyPct = snapshot.portfolio_value
     ? ((weeklyPnl / snapshot.portfolio_value) * 100).toFixed(2)
     : "0.00";
-  const alerts = buildDashboardAlerts(snapshot.alerts ?? [], techPct, techLimit);
-  const var95 = advanced?.var_95_1d ?? snapshot.portfolio_value * -0.075;
-  const volatility = 12 + techPct * 0.05;
-  const sharpe = snapshot.risk_score >= 55 ? 1.12 : 1.32;
-  const sortino = sharpe + 0.57;
 
   return (
     <AppMain showMenuButton={false}>
@@ -113,34 +94,19 @@ export default function DashboardPage() {
           <RiskScoreCard score={snapshot.risk_score} label={snapshot.risk_label} />
         </div>
 
-        <div id="risk-analytics" className="mt-4 grid scroll-mt-6 gap-4 xl:grid-cols-3">
-          <div className="xl:col-span-1">
-            <ExposureDonut
-              sectors={snapshot.sector_exposure}
-              cashPct={snapshot.cash_pct}
-              totalValue={snapshot.portfolio_value}
-            />
+        <Card className="mt-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-extrabold">Risk Analytics</h2>
+              <p className="tg-sub mt-1">
+                Exposure breakdown, correlation matrix, VaR, and concentration alerts
+              </p>
+            </div>
+            <Link href="/risk-analytics" className="tg-btn tg-btn-primary shrink-0">
+              Open Risk Analytics
+            </Link>
           </div>
-          <div className="xl:col-span-1">
-            <CorrelationHeatmap matrix={advanced?.correlation_matrix ?? {}} />
-          </div>
-          <div className="xl:col-span-1">
-            <RiskAlertsPanel alerts={alerts} />
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-4 xl:grid-cols-3">
-          <SectorExposureChart sectors={snapshot.sector_exposure} />
-          <RiskMetricsPanel
-            volatility={volatility}
-            sharpe={sharpe}
-            var95={var95}
-            sortino={sortino}
-            expectedShortfall={Math.abs(var95) * 1.55}
-            maxDrawdown={snapshot.max_drawdown_est}
-          />
-          <AiRecommendationPanel techPct={techPct} techLimit={techLimit} riskLabel={snapshot.risk_label} />
-        </div>
+        </Card>
 
         <details className="mt-4">
           <summary className="cursor-pointer text-sm font-semibold text-muted hover:text-white">
@@ -205,23 +171,13 @@ export default function DashboardPage() {
                 <Link href="/portfolio" className="tg-btn tg-btn-secondary inline-block">
                   Portfolio
                 </Link>
+                <Link href="/risk-analytics" className="tg-btn tg-btn-secondary inline-block">
+                  Risk Analytics
+                </Link>
                 <Link href="/analysis" className="tg-btn tg-btn-primary inline-block">
                   Stock Analyzer
                 </Link>
               </div>
-              {advanced?.stress_tests?.length ? (
-                <div className="mt-4 border-t border-white/10 pt-4">
-                  <p className="tg-label">Stress Tests</p>
-                  {advanced.stress_tests.map((s) => (
-                    <Row
-                      key={s.name}
-                      label={s.name}
-                      value={`$${s.impact_usd.toLocaleString()}`}
-                      tone={s.severity === "high" ? "red" : "orange"}
-                    />
-                  ))}
-                </div>
-              ) : null}
             </Card>
           </div>
         </details>
