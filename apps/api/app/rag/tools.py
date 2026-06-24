@@ -78,6 +78,26 @@ class RAGTools:
             doc_types=["ml_run"],
         )
 
+    async def search_news(
+        self, query: str, *, ticker: str | None = None, top_k: int | None = None
+    ) -> list[RAGChunk]:
+        return await self.rag.search(
+            query,
+            top_k=top_k or settings.rag_top_k,
+            ticker=ticker,
+            doc_types=["news"],
+        )
+
+    async def search_regime(
+        self, query: str, *, ticker: str | None = None, top_k: int | None = None
+    ) -> list[RAGChunk]:
+        return await self.rag.search(
+            query,
+            top_k=top_k or settings.rag_top_k,
+            ticker=ticker,
+            doc_types=["regime_snapshot"],
+        )
+
     async def query_trades(self, *, ticker: str | None = None, limit: int = 10) -> dict:
         storage = await get_storage()
         trades = await storage.list_paper_trades(limit=limit)
@@ -133,6 +153,37 @@ class RAGTools:
     async def ml_status(self) -> dict:
         return await self.ml.status()
 
+    def _apply_diversity_quota(self, chunks: list[RAGChunk], top_k: int) -> list[RAGChunk]:
+        caps = {
+            "playbook": 2,
+            "filing": 2,
+            "news": 1,
+            "regime_snapshot": 1,
+            "journal": 1,
+            "analysis_snapshot": 1,
+            "ml_run": 1,
+        }
+        sorted_chunks = sorted(chunks, key=lambda c: c.score, reverse=True)
+        picked: list[RAGChunk] = []
+        type_counts: dict[str, int] = {}
+        for chunk in sorted_chunks:
+            doc_type = chunk.doc_type or (chunk.meta or {}).get("type", "document")
+            count = type_counts.get(doc_type, 0)
+            if count >= caps.get(doc_type, 2):
+                continue
+            picked.append(chunk)
+            type_counts[doc_type] = count + 1
+            if len(picked) >= top_k:
+                break
+        if len(picked) < top_k:
+            for chunk in sorted_chunks:
+                if chunk in picked:
+                    continue
+                picked.append(chunk)
+                if len(picked) >= top_k:
+                    break
+        return picked
+
     async def _run_rag_tools(
         self,
         tool_names: list[str],
@@ -151,6 +202,8 @@ class RAGTools:
             "search_journal": self.search_journal,
             "search_analysis_history": self.search_analysis_history,
             "search_ml_runs": self.search_ml_runs,
+            "search_news": self.search_news,
+            "search_regime": self.search_regime,
         }
         tasks = [
             tool_map[name](message, ticker=ticker, top_k=per_tool_k)
@@ -167,7 +220,10 @@ class RAGTools:
                 existing = merged.get(chunk.id)
                 if not existing or chunk.score > existing.score:
                     merged[chunk.id] = chunk
-        return sorted(merged.values(), key=lambda c: c.score, reverse=True)[:top_k]
+        return self._apply_diversity_quota(
+            sorted(merged.values(), key=lambda c: c.score, reverse=True),
+            top_k,
+        )
 
     async def _run_direct_call(
         self,
@@ -235,6 +291,17 @@ class RAGTools:
         if plan.use_rag and plan.rag_tools:
             tools_used.extend(plan.rag_tools)
             rag_chunks = await self._run_rag_tools(plan.rag_tools, message, ticker=ticker, top_k=top_k)
+
+        if "check_risk_limits" in plan.direct_calls:
+            has_playbook = any(
+                (c.doc_type or (c.meta or {}).get("type")) == "playbook" for c in rag_chunks
+            )
+            if not has_playbook:
+                extra = await self.search_playbooks(message, ticker=ticker, top_k=1)
+                merged = {c.id: c for c in rag_chunks}
+                for chunk in extra:
+                    merged[chunk.id] = chunk
+                rag_chunks = sorted(merged.values(), key=lambda c: c.score, reverse=True)[:top_k]
 
         logger.info(
             "query_plan_executed",

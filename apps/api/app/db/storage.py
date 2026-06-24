@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import math
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.auth import DEFAULT_USER_ID
@@ -92,6 +92,44 @@ def _rag_matches_ticker(meta: dict | None, ticker: str | None) -> bool:
     return True
 
 
+# Shared SQL fragments for RAG ACL / filters (Postgres keyword + vector search).
+_RAG_ACL_SQL = """
+(
+    (
+        COALESCE(meta->>'visibility', 'global') = 'global'
+        AND NOT (
+            meta->>'type' = 'journal'
+            AND meta->>'user_id' IS NOT NULL
+            AND meta->>'user_id' != :uid
+        )
+    )
+    OR (meta->>'visibility' = 'user' AND meta->>'user_id' = :uid)
+    OR (meta->>'visibility' = 'tenant' AND COALESCE(meta->>'tenant_id', :uid) = :uid)
+    OR (meta->>'type' = 'journal' AND meta->>'user_id' = :uid)
+)
+"""
+
+_RAG_TICKER_SQL = """
+(
+    :ticker IS NULL
+    OR meta->>'type' = 'playbook'
+    OR meta->>'ticker' = :ticker
+    OR meta->>'ticker' IS NULL
+)
+"""
+
+
+def _rag_row_to_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "chunk_id": row["chunk_id"],
+        "source": row["source"],
+        "content": row["content"],
+        "meta": row["meta"],
+        "score": float(row["score"] or 0),
+    }
+
+
 def _embedding_to_pgvector(embedding: list[float]) -> str:
     return "[" + ",".join(str(x) for x in embedding) + "]"
 
@@ -160,7 +198,29 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
+    async def keyword_search_rag(
+        self,
+        query: str,
+        top_k: int = 20,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
+        pass
+
+    @abstractmethod
     async def get_rag_content_hashes(self, chunk_ids: list[str]) -> dict[str, str]:
+        pass
+
+    @abstractmethod
+    async def get_rag_documents_by_chunk_ids(self, chunk_ids: list[str]) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def get_rag_parent_chunks(self, parent_id: str) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def delete_stale_rag_news(self, *, older_than_days: int) -> int:
         pass
 
     @abstractmethod
@@ -472,6 +532,24 @@ class MemoryStorageBackend(StorageBackend):
             rows.append(dict(doc))
         return rows
 
+    async def keyword_search_rag(
+        self,
+        query: str,
+        top_k: int = 20,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
+        from app.rag.retrieval import keyword_score
+
+        rows = await self.list_rag_documents(ticker=ticker, doc_types=doc_types)
+        scored: list[dict] = []
+        for doc in rows:
+            score = keyword_score(query, doc.get("content", ""))
+            if score > 0:
+                scored.append({**doc, "score": float(score)})
+        scored.sort(key=lambda row: row["score"], reverse=True)
+        return scored[:top_k]
+
     async def get_rag_content_hashes(self, chunk_ids: list[str]) -> dict[str, str]:
         if not chunk_ids:
             return {}
@@ -485,6 +563,48 @@ class MemoryStorageBackend(StorageBackend):
             if digest:
                 hashes[chunk_id] = digest
         return hashes
+
+    async def get_rag_documents_by_chunk_ids(self, chunk_ids: list[str]) -> list[dict]:
+        if not chunk_ids:
+            return []
+        wanted = set(chunk_ids)
+        return [
+            dict(doc)
+            for doc in self._data["rag_documents"]
+            if doc.get("chunk_id") in wanted
+        ]
+
+    async def get_rag_parent_chunks(self, parent_id: str) -> list[dict]:
+        rows = []
+        for doc in self._data["rag_documents"]:
+            meta = doc.get("meta") or {}
+            if meta.get("parent_id") == parent_id or doc.get("chunk_id", "").startswith(
+                f"{parent_id}-"
+            ):
+                rows.append(dict(doc))
+        rows.sort(key=lambda d: (d.get("meta") or {}).get("chunk_index", 0))
+        return rows
+
+    async def delete_stale_rag_news(self, *, older_than_days: int) -> int:
+        from app.rag.retrieval import _parse_date
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        kept = []
+        deleted = 0
+        for doc in self._data["rag_documents"]:
+            meta = doc.get("meta") or {}
+            if meta.get("type") != "news":
+                kept.append(doc)
+                continue
+            published = _parse_date(meta.get("published_at"))
+            if published and published < cutoff:
+                deleted += 1
+                continue
+            kept.append(doc)
+        self._data["rag_documents"] = kept
+        if deleted:
+            self._persist()
+        return deleted
 
     async def list_rag_documents_raw(self) -> list[dict]:
         return [dict(doc) for doc in self._data["rag_documents"]]
@@ -838,6 +958,31 @@ class PostgresStorageBackend(StorageBackend):
                     await conn.execute(text(index_sql))
                 except Exception as exc:
                     logger.warning("rag_meta_index_skipped", sql=index_sql, error=str(exc))
+            try:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE rag_documents ADD COLUMN IF NOT EXISTS content_tsv tsvector"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE rag_documents
+                        SET content_tsv = to_tsvector('english', coalesce(content, ''))
+                        WHERE content_tsv IS NULL
+                        """
+                    )
+                )
+                await conn.execute(
+                    text(
+                        """
+                        CREATE INDEX IF NOT EXISTS rag_documents_content_tsv_idx
+                        ON rag_documents USING gin (content_tsv)
+                        """
+                    )
+                )
+            except Exception as exc:
+                logger.warning("rag_tsv_index_skipped", error=str(exc))
         logger.info("storage_init", backend="postgres")
 
     async def close(self) -> None:
@@ -943,8 +1088,10 @@ class PostgresStorageBackend(StorageBackend):
         }
 
     async def upsert_rag_documents(self, docs: list[dict]) -> int:
+        chunk_ids: list[str] = []
         async with self._session() as session:
             for doc in docs:
+                chunk_ids.append(doc["chunk_id"])
                 existing = await session.execute(
                     select(RAGDocument).where(RAGDocument.chunk_id == doc["chunk_id"])
                 )
@@ -965,7 +1112,34 @@ class PostgresStorageBackend(StorageBackend):
                         )
                     )
             await session.commit()
+            if chunk_ids:
+                await session.execute(
+                    text(
+                        """
+                        UPDATE rag_documents
+                        SET content_tsv = to_tsvector('english', coalesce(content, ''))
+                        WHERE chunk_id = ANY(:chunk_ids)
+                        """
+                    ),
+                    {"chunk_ids": chunk_ids},
+                )
+                await session.commit()
         return len(docs)
+
+    def _rag_search_params(
+        self,
+        *,
+        ticker: str | None,
+        doc_types: list[str] | None,
+    ) -> tuple[str, dict]:
+        uid = _uid()
+        params: dict = {"uid": uid, "ticker": ticker.upper() if ticker else None}
+        doc_type_sql = "TRUE"
+        if doc_types:
+            doc_type_sql = "meta->>'type' = ANY(:doc_types)"
+            params["doc_types"] = doc_types
+        where = f"WHERE {_RAG_TICKER_SQL} AND {_RAG_ACL_SQL} AND ({doc_type_sql})"
+        return where, params
 
     async def search_rag(
         self,
@@ -976,41 +1150,58 @@ class PostgresStorageBackend(StorageBackend):
     ) -> list[dict]:
         fetch_k = top_k * 4 if doc_types else top_k
         vec = _embedding_to_pgvector(query_embedding)
-        ticker_filter = ticker.upper() if ticker else None
+        where, params = self._rag_search_params(ticker=ticker, doc_types=doc_types)
         sql = text(
-            """
+            f"""
             SELECT id, chunk_id, source, content, meta,
                    1 - (embedding <=> CAST(:vec AS vector)) AS score
             FROM rag_documents
-            WHERE (
-                :ticker IS NULL
-                OR meta->>'type' = 'playbook'
-                OR meta->>'ticker' = :ticker
-                OR meta->>'ticker' IS NULL
-            )
+            {where}
             ORDER BY embedding <=> CAST(:vec AS vector)
             LIMIT :top_k
             """
         )
+        params.update({"vec": vec, "top_k": fetch_k})
         async with self._session() as session:
-            result = await session.execute(
-                sql, {"vec": vec, "ticker": ticker_filter, "top_k": fetch_k}
-            )
-            rows = result.mappings().all()
-            filtered = [
-                {
-                    "id": r["id"],
-                    "chunk_id": r["chunk_id"],
-                    "source": r["source"],
-                    "content": r["content"],
-                    "meta": r["meta"],
-                    "score": float(r["score"] or 0),
-                }
-                for r in rows
-                if _matches_doc_types(r["meta"], doc_types)
-                and _rag_visible_to_user(r["meta"], _uid())
-            ]
-            return filtered[:top_k]
+            result = await session.execute(sql, params)
+            return [_rag_row_to_dict(r) for r in result.mappings().all()][:top_k]
+
+    async def keyword_search_rag(
+        self,
+        query: str,
+        top_k: int = 20,
+        ticker: str | None = None,
+        doc_types: list[str] | None = None,
+    ) -> list[dict]:
+        if not query.strip():
+            return []
+
+        where, params = self._rag_search_params(ticker=ticker, doc_types=doc_types)
+        params["query"] = query.strip()
+        params["top_k"] = top_k
+        sql = text(
+            f"""
+            SELECT id, chunk_id, source, content, meta,
+                   GREATEST(
+                       COALESCE(
+                           ts_rank_cd(content_tsv, plainto_tsquery('english', :query)),
+                           0
+                       ),
+                       similarity(content, :query)
+                   ) AS score
+            FROM rag_documents
+            {where}
+              AND (
+                  (content_tsv IS NOT NULL AND content_tsv @@ plainto_tsquery('english', :query))
+                  OR similarity(content, :query) > 0.08
+              )
+            ORDER BY score DESC
+            LIMIT :top_k
+            """
+        )
+        async with self._session() as session:
+            result = await session.execute(sql, params)
+            return [_rag_row_to_dict(r) for r in result.mappings().all()]
 
     async def list_rag_documents(
         self,
@@ -1056,6 +1247,67 @@ class PostgresStorageBackend(StorageBackend):
                 if digest:
                     hashes[chunk_id] = digest
             return hashes
+
+    async def get_rag_documents_by_chunk_ids(self, chunk_ids: list[str]) -> list[dict]:
+        if not chunk_ids:
+            return []
+        async with self._session() as session:
+            result = await session.execute(
+                select(RAGDocument).where(RAGDocument.chunk_id.in_(chunk_ids))
+            )
+            docs = result.scalars().all()
+            return [
+                {
+                    "id": doc.id,
+                    "chunk_id": doc.chunk_id,
+                    "source": doc.source,
+                    "content": doc.content,
+                    "meta": doc.meta or {},
+                }
+                for doc in docs
+            ]
+
+    async def get_rag_parent_chunks(self, parent_id: str) -> list[dict]:
+        async with self._session() as session:
+            result = await session.execute(
+                select(RAGDocument).where(
+                    or_(
+                        RAGDocument.meta["parent_id"].astext == parent_id,
+                        RAGDocument.chunk_id.like(f"{parent_id}-%"),
+                    )
+                )
+            )
+            docs = result.scalars().all()
+            rows = [
+                {
+                    "id": doc.id,
+                    "chunk_id": doc.chunk_id,
+                    "source": doc.source,
+                    "content": doc.content,
+                    "meta": doc.meta or {},
+                }
+                for doc in docs
+            ]
+            rows.sort(key=lambda d: (d.get("meta") or {}).get("chunk_index", 0))
+            return rows
+
+    async def delete_stale_rag_news(self, *, older_than_days: int) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        cutoff_iso = cutoff.isoformat()
+        async with self._session() as session:
+            result = await session.execute(
+                select(RAGDocument).where(
+                    RAGDocument.meta["type"].astext == "news",
+                    RAGDocument.meta["published_at"].astext < cutoff_iso,
+                )
+            )
+            stale = result.scalars().all()
+            deleted = len(stale)
+            for doc in stale:
+                await session.delete(doc)
+            if deleted:
+                await session.commit()
+            return deleted
 
     async def list_rag_documents_raw(self) -> list[dict]:
         async with self._session() as session:

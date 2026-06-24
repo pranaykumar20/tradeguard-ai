@@ -1,6 +1,7 @@
 """TradeGuard agent orchestrator — LLM explains, risk engine decides."""
 
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator
 
@@ -108,13 +109,27 @@ class TradeGuardOrchestrator:
         rag_tools_used: list[str],
         rag_chunks,
         direct_results: dict[str, dict],
+        *,
+        latency_ms: float | None = None,
     ) -> dict:
-        return {
+        trace = {
             "query_plan": query_plan,
             "rag_tools": rag_tools_used,
             "rag_chunk_ids": [c.id for c in rag_chunks],
+            "rag_chunks": [
+                {
+                    "id": c.id,
+                    "score": round(float(c.score), 4),
+                    "doc_type": c.doc_type or (c.meta or {}).get("type"),
+                    "source": c.source,
+                }
+                for c in rag_chunks
+            ],
             "direct_calls": list(direct_results.keys()),
         }
+        if latency_ms is not None:
+            trace["latency_ms"] = round(latency_ms, 1)
+        return trace
 
     async def _load_chat_history(self, session_id: str) -> list[dict]:
         if not session_id or settings.chat_history_turns <= 0:
@@ -132,20 +147,22 @@ class TradeGuardOrchestrator:
         message: str,
         ticker: str | None,
         trade_intent: dict | None = None,
-    ) -> tuple[list, list[str], dict[str, dict], dict]:
+    ) -> tuple[list, list[str], dict[str, dict], dict, float]:
+        started = time.perf_counter()
         try:
             chunks, tools, direct, plan = await self.rag_tools.retrieve_for_message(
                 message,
                 ticker=ticker,
                 trade_intent=trade_intent,
             )
-            return chunks, tools, direct, plan.model_dump()
+            latency_ms = (time.perf_counter() - started) * 1000
+            return chunks, tools, direct, plan.model_dump(), latency_ms
         except Exception as exc:
             logger.warning("query_plan_failed", error=str(exc), ticker=ticker)
-            return [], [], {}, {}
+            return [], [], {}, {}, 0.0
 
     async def _retrieve_rag(self, message: str, ticker: str | None) -> tuple[list, list[str]]:
-        chunks, tools, _, _ = await self._execute_query_plan(message, ticker)
+        chunks, tools, _, _, _ = await self._execute_query_plan(message, ticker)
         return chunks, tools
 
     async def _fetch_web_context(self, message: str, ticker: str | None) -> dict:
@@ -177,8 +194,8 @@ class TradeGuardOrchestrator:
             if primary_ticker
             else None
         )
-        rag_chunks, rag_tools_used, direct_results, query_plan = await self._execute_query_plan(
-            message, primary_ticker, trade_intent=trade_intent
+        rag_chunks, rag_tools_used, direct_results, query_plan, retrieval_latency_ms = (
+            await self._execute_query_plan(message, primary_ticker, trade_intent=trade_intent)
         )
         web_data = await self._fetch_web_context(message, primary_ticker)
         quote_data, price_context = await self._fetch_price_context(message, primary_ticker)
@@ -201,7 +218,8 @@ class TradeGuardOrchestrator:
             )
             result["query_plan"] = query_plan
             result["retrieval_trace"] = self._build_retrieval_trace(
-                query_plan, rag_tools_used, rag_chunks, direct_results
+                query_plan, rag_tools_used, rag_chunks, direct_results,
+                latency_ms=retrieval_latency_ms,
             )
             result = self._enrich_result(result)
             storage = await get_storage()
@@ -330,7 +348,8 @@ class TradeGuardOrchestrator:
             "rag_tools": rag_tools_used,
             "query_plan": query_plan,
             "retrieval_trace": self._build_retrieval_trace(
-                query_plan, rag_tools_used, rag_chunks, direct_results
+                query_plan, rag_tools_used, rag_chunks, direct_results,
+                latency_ms=retrieval_latency_ms,
             ),
             "web_sources": news_data.get("headlines", [])[:5],
         }
@@ -373,8 +392,8 @@ class TradeGuardOrchestrator:
             if primary_ticker
             else None
         )
-        rag_chunks, rag_tools_used, direct_results, query_plan = await self._execute_query_plan(
-            message, primary_ticker, trade_intent=trade_intent
+        rag_chunks, rag_tools_used, direct_results, query_plan, retrieval_latency_ms = (
+            await self._execute_query_plan(message, primary_ticker, trade_intent=trade_intent)
         )
         yield {
             "type": "retrieval",
@@ -405,7 +424,8 @@ class TradeGuardOrchestrator:
             )
             result["query_plan"] = query_plan
             result["retrieval_trace"] = self._build_retrieval_trace(
-                query_plan, rag_tools_used, rag_chunks, direct_results
+                query_plan, rag_tools_used, rag_chunks, direct_results,
+                latency_ms=retrieval_latency_ms,
             )
             enriched = self._enrich_result(result)
             yield {"type": "structured", "data": enriched.get("structured")}
@@ -513,7 +533,8 @@ class TradeGuardOrchestrator:
             "rag_tools": rag_tools_used,
             "query_plan": query_plan,
             "retrieval_trace": self._build_retrieval_trace(
-                query_plan, rag_tools_used, rag_chunks, direct_results
+                query_plan, rag_tools_used, rag_chunks, direct_results,
+                latency_ms=retrieval_latency_ms,
             ),
             "web_sources": news_data.get("headlines", [])[:5],
         }

@@ -420,14 +420,25 @@ def build_citations(
         content = (source.get("content") or "").strip()
         if not content:
             continue
+        filed_at = source.get("filed_at")
+        section = source.get("section")
+        doc_type = source.get("doc_type") or "document"
+        label_parts = [source.get("source") or "Playbook"]
+        if section:
+            label_parts.append(section)
+        if filed_at:
+            label_parts.append(str(filed_at)[:10])
         citations.append(
             {
                 "id": idx,
                 "kind": "rag",
-                "label": source.get("source") or "Playbook",
+                "label": " · ".join(label_parts),
                 "title": content[:80] + ("…" if len(content) > 80 else ""),
-                "url": "",
+                "url": source.get("url") or "",
                 "snippet": content[:160],
+                "doc_type": doc_type,
+                "filed_at": filed_at,
+                "section": section,
             }
         )
         idx += 1

@@ -11,7 +11,7 @@ from app.agents.intent import PORTFOLIO_PATTERN
 from app.agents.tickers import extract_tickers, is_price_query
 from app.core.config import settings
 from app.rag.retrieval import parse_temporal_window
-from app.rag.tool_routing import infer_rag_tools
+from app.rag.tool_routing import infer_rag_tools, infer_rag_tools_with_fallback
 
 Freshness = Literal["live", "recent", "historical"]
 
@@ -93,7 +93,7 @@ def plan_query(message: str, tickers: list[str] | None = None) -> QueryPlan:
     if re.search(r"\b(model auc|ml status|model version)\b", q):
         direct.append("ml_status")
 
-    rag_tools = infer_rag_tools(message)
+    rag_tools = infer_rag_tools_with_fallback(message)
     use_rag = bool(rag_tools)
 
     # Pure live price queries should not retrieve stale chunks

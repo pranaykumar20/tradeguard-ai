@@ -20,11 +20,20 @@ def content_hash(text: str) -> str:
 
 
 def normalize_document(doc: dict) -> dict:
+    from datetime import datetime, timezone
+
     meta = dict(doc.get("meta") or {})
     doc_type = meta.get("type", "document")
     meta.setdefault("type", doc_type)
     meta.setdefault("visibility", "global")
     meta.setdefault("embedding_version", settings.rag_embedding_version)
+    meta.setdefault("ingested_at", datetime.now(timezone.utc).isoformat())
+    if doc_type == "news":
+        meta.setdefault("staleness_class", "fast")
+    elif doc_type in {"filing", "playbook"}:
+        meta.setdefault("staleness_class", "slow")
+    if meta.get("source_id") is None and doc.get("chunk_id"):
+        meta.setdefault("source_id", str(doc.get("chunk_id")).split("-part-")[0])
     return {
         "chunk_id": doc.get("chunk_id") or doc.get("id"),
         "source": doc.get("source", "upload"),

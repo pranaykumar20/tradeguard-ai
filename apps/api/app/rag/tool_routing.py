@@ -71,6 +71,29 @@ ML_RUN_HINTS = (
     "walk-forward",
 )
 
+NEWS_TOOL_HINTS = (
+    "news",
+    "headline",
+    "sentiment",
+    "earnings call",
+    "announced",
+    "reported today",
+    "breaking",
+    "what happened",
+)
+
+REGIME_TOOL_HINTS = (
+    "regime",
+    "macro",
+    "risk-on",
+    "risk off",
+    "risk-off",
+    "market environment",
+    "high volatility",
+    "vix level",
+    "risk on",
+)
+
 TICKER_PATTERN = re.compile(r"\b(NVDA|MSFT|META|TSLA|QQQ|GBTC|AAPL|SPY|SMH)\b", re.I)
 
 
@@ -90,6 +113,10 @@ def infer_rag_tools(message: str) -> list[str]:
         tools.append("search_analysis_history")
     if any(hint in q for hint in ML_RUN_HINTS):
         tools.append("search_ml_runs")
+    if any(hint in q for hint in NEWS_TOOL_HINTS):
+        tools.append("search_news")
+    if any(hint in q for hint in REGIME_TOOL_HINTS):
+        tools.append("search_regime")
 
     if not tools:
         if TICKER_PATTERN.search(message) and any(
@@ -99,3 +126,29 @@ def infer_rag_tools(message: str) -> list[str]:
         return []
 
     return list(dict.fromkeys(tools))
+
+
+def classify_rag_tools_fallback(message: str) -> list[str]:
+    """Cheap classifier when hint matching returns no tools."""
+    q = message.lower()
+    tools: list[str] = []
+    if any(word in q for word in ("buy", "sell", "trade", "risk", "should", "block")):
+        tools.append("search_playbooks")
+    if any(word in q for word in ("news", "headline", "earnings", "announced")):
+        tools.append("search_news")
+    if any(word in q for word in ("regime", "macro", "vix", "volatility", "market")):
+        tools.append("search_regime")
+    if any(word in q for word in ("filing", "10-k", "fundamental", "sec")):
+        tools.append("search_filings")
+    if not tools:
+        tools.append("search_playbooks")
+    return list(dict.fromkeys(tools))
+
+
+def infer_rag_tools_with_fallback(message: str) -> list[str]:
+    tools = infer_rag_tools(message)
+    if tools:
+        return tools
+    if settings.rag_classifier_fallback_enabled:
+        return classify_rag_tools_fallback(message)
+    return []

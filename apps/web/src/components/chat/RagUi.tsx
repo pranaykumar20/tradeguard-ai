@@ -72,6 +72,12 @@ export function SourceDrawer({ sources }: SourceDrawerProps) {
                 {DOC_TYPE_LABELS[source.doc_type ?? "document"] ?? source.doc_type}
               </span>
               <span className="font-semibold text-white/80">{source.source}</span>
+              {source.section ? (
+                <span className="text-muted">{source.section}</span>
+              ) : null}
+              {source.filed_at ? (
+                <span className="text-muted">{source.filed_at.slice(0, 10)}</span>
+              ) : null}
               <span className="text-muted">score {source.score.toFixed(2)}</span>
             </div>
             <p className="mt-1 line-clamp-3 text-white/60">{source.content}</p>

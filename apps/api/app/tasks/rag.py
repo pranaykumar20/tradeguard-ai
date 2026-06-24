@@ -18,6 +18,15 @@ async def refresh_rag_index_async() -> dict:
     return result
 
 
+async def evict_stale_rag_news_async() -> dict:
+    deleted = await RAGIndexer().evict_stale_news()
+    return {"deleted": deleted, "ttl_days": settings.rag_news_ttl_days}
+
+
+def evict_stale_rag_news() -> dict:
+    return asyncio.run(evict_stale_rag_news_async())
+
+
 def refresh_rag_index() -> dict:
     return asyncio.run(refresh_rag_index_async())
 
@@ -53,6 +62,32 @@ try:
             from app.rag.eval.runner import run_rag_eval
 
             return asyncio.run(run_rag_eval())
+
+        celery_app.conf.beat_schedule.setdefault(
+            "evict-stale-rag-news",
+            {
+                "task": "app.tasks.rag.evict_stale_rag_news_task",
+                "schedule": 86400.0,
+            },
+        )
+
+        @celery_app.task(name="app.tasks.rag.evict_stale_rag_news_task")
+        def evict_stale_rag_news_task() -> dict:
+            return evict_stale_rag_news()
+
+        celery_app.conf.beat_schedule.setdefault(
+            "rag-drift-weekly",
+            {
+                "task": "app.tasks.rag.run_rag_drift_check_task",
+                "schedule": 7 * 86400.0,
+            },
+        )
+
+        @celery_app.task(name="app.tasks.rag.run_rag_drift_check_task")
+        def run_rag_drift_check_task() -> dict:
+            from app.rag.eval.runner import run_rag_drift_check
+
+            return asyncio.run(run_rag_drift_check())
 
 except Exception:
     pass

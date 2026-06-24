@@ -25,6 +25,12 @@ Playbooks in `docs/playbooks/*.md` are indexed on API startup. Override dir with
 - Live OpenAI embeddings when key set.
 - Config: `EMBEDDING_PROVIDER`, `OPENAI_API_KEY`.
 
+### Keyword search (Phase 6)
+
+- Postgres: `keyword_search_rag()` uses `content_tsv` (tsvector) + `pg_trgm` similarity fallback.
+- SQL ACL enforced in `search_rag` and `keyword_search_rag` WHERE clauses.
+- Config: `RAG_KEYWORD_SEARCH_ENABLED` (default true).
+
 ## ML
 
 | Component | Path |
@@ -45,6 +51,16 @@ Playbooks in `docs/playbooks/*.md` are indexed on API startup. Override dir with
 
 - `ML_JOURNAL_RETRAIN_ENABLED` — uses trade journal outcomes.
 - Admin API: `/api/intelligence/ml`.
+
+### Phase 7–8 (quality + scale)
+
+- Parent-child filing expansion, staleness labels, news TTL eviction.
+- `search_news`, `search_regime`; regime snapshot indexer on scheduled refresh.
+- Mock cross-encoder reranker: `apps/api/app/providers/reranker/`.
+- Query cache: `apps/api/app/rag/cache.py` (invalidated on reindex).
+- Research mode: `POST /api/chat/research` (read-only multi-tool loop).
+- Drift check: `check_rag_drift()` in eval runner; weekly Celery task.
+- Feedback: `rag_chunk_ids` on `POST /api/chat/feedback`.
 
 ## After changes
 

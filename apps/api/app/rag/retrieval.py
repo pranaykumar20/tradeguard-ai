@@ -169,6 +169,22 @@ NEWS_HINTS = (
     "today",
 )
 
+REGIME_HINTS = (
+    "regime",
+    "macro",
+    "risk-on",
+    "risk off",
+    "risk-off",
+    "market environment",
+    "high volatility",
+    "vix level",
+)
+
+TODAY_NEWS_PATTERN = re.compile(
+    r"\b(today|this morning|just now|breaking|latest news)\b",
+    re.I,
+)
+
 QUERY_EXPANSIONS: dict[str, str] = {
     "vix": "VIX volatility index rising high-volatility regime",
     "wash sale": "wash sale tax lot 30 day window loss disallowed",
@@ -214,6 +230,8 @@ def infer_doc_types(query: str) -> list[str] | None:
         types.append("filing")
     if any(hint in q for hint in NEWS_HINTS):
         types.append("news")
+    if any(hint in q for hint in REGIME_HINTS):
+        types.append("regime_snapshot")
 
     if not types:
         return None
@@ -280,6 +298,7 @@ def recency_multiplier(meta: dict | None, half_life_days: int | None = None) -> 
         "journal": 365,
         "analysis_snapshot": 30,
         "ml_run": 90,
+        "regime_snapshot": 3,
     }
     if doc_type not in half_life_by_type:
         return 1.0
@@ -350,6 +369,91 @@ def apply_temporal_filter(documents: list[dict], query: str) -> list[dict]:
         if ts and start <= ts <= end:
             filtered.append(doc)
     return filtered if filtered else documents
+
+
+def is_today_news_query(query: str) -> bool:
+    return bool(TODAY_NEWS_PATTERN.search(query))
+
+
+def apply_news_freshness_cutoff(documents: list[dict], query: str) -> list[dict]:
+    """Drop stale news for 'today' queries; keep non-news docs untouched."""
+    if not settings.rag_news_today_cutoff_enabled or not is_today_news_query(query):
+        return documents
+
+    max_age = settings.rag_news_today_max_age_days
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age)
+    kept: list[dict] = []
+    for doc in documents:
+        meta = doc.get("meta") or {}
+        if meta.get("type") != "news":
+            kept.append(doc)
+            continue
+        published = _parse_date(meta.get("published_at"))
+        if published and published >= cutoff:
+            kept.append(doc)
+    return kept if kept else [d for d in documents if (d.get("meta") or {}).get("type") != "news"]
+
+
+def staleness_label(meta: dict | None) -> str:
+    if not settings.rag_staleness_labels_enabled:
+        return ""
+    meta = meta or {}
+    doc_type = meta.get("type")
+    date_str = (
+        meta.get("filed_at")
+        or meta.get("published_at")
+        or meta.get("as_of")
+        or meta.get("closed_at")
+    )
+    if not date_str:
+        return ""
+    parsed = _parse_date(date_str)
+    if not parsed:
+        return ""
+
+    age_days = (datetime.now(timezone.utc) - parsed).total_seconds() / 86400
+    date_label = parsed.date().isoformat()
+    if doc_type == "news" and age_days > settings.rag_news_today_max_age_days:
+        return f"[STALE: published {date_label}]"
+    if doc_type == "filing" and age_days > 365:
+        return f"[STALE: filed {date_label}]"
+    if doc_type in {"regime_snapshot", "analysis_snapshot"} and age_days > 7:
+        return f"[STALE: as of {date_label}]"
+    return ""
+
+
+def enrich_filing_parent_context(item: ScoredDocument, header_doc: dict | None) -> ScoredDocument:
+    if not header_doc:
+        return item
+    header_meta = header_doc.get("meta") or {}
+    section = header_meta.get("section", "Section")
+    header_text = (header_doc.get("content") or "")[:400].strip()
+    if not header_text or header_text in item.content:
+        return item
+    prefix = f"[{section}] {header_text}"
+    return ScoredDocument(
+        chunk_id=item.chunk_id,
+        content=f"{prefix}\n{item.content}",
+        source=item.source,
+        meta=item.meta,
+        vector_score=item.vector_score,
+        keyword_score=item.keyword_score,
+        hybrid_score=item.hybrid_score,
+        final_score=item.final_score,
+    )
+
+
+def should_use_cross_encoder(query: str, preferred_types: list[str] | None) -> bool:
+    if not settings.rag_reranker_enabled:
+        return False
+    if preferred_types == ["playbook"]:
+        return False
+    q = query.lower()
+    if any(hint in q for hint in PLAYBOOK_HINTS) and not any(
+        hint in q for hint in FILING_HINTS + NEWS_HINTS
+    ):
+        return False
+    return True
 
 
 @dataclass

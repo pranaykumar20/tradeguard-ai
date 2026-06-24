@@ -24,6 +24,13 @@ class ChatFeedbackRequest(BaseModel):
     message_id: str | None = None
     rating: Literal["up", "down"]
     comment: str | None = Field(default=None, max_length=500)
+    rag_chunk_ids: list[str] = Field(default_factory=list)
+
+
+class ChatResearchRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    ticker: str | None = None
+    top_k: int | None = Field(default=None, ge=1, le=10)
 
 
 class ChatFactor(BaseModel):
@@ -152,12 +159,38 @@ async def chat_feedback(request: ChatFeedbackRequest):
     key = f"chat_feedback:{request.session_id}"
     state = await storage.get_app_state(key) or {"entries": []}
     entries = list(state.get("entries", []))
-    entries.append(
-        {
-            "message_id": request.message_id,
-            "rating": request.rating,
-            "comment": request.comment,
-        }
-    )
+    entry = {
+        "message_id": request.message_id,
+        "rating": request.rating,
+        "comment": request.comment,
+        "rag_chunk_ids": request.rag_chunk_ids,
+    }
+    entries.append(entry)
     await storage.set_app_state(key, {"entries": entries[-100:]})
+
+    if request.rating == "down" and request.rag_chunk_ids:
+        from app.rag.eval.runner import record_negative_rag_feedback
+
+        await record_negative_rag_feedback(
+            session_id=request.session_id,
+            rag_chunk_ids=request.rag_chunk_ids,
+            comment=request.comment,
+        )
+
     return {"ok": True, "session_id": request.session_id}
+
+
+@router.post("/research")
+async def chat_research(request: ChatResearchRequest):
+    from app.rag.research import research_retrieve
+
+    chunks, tools, meta = await research_retrieve(
+        request.message,
+        ticker=request.ticker,
+        top_k=request.top_k,
+    )
+    return {
+        "chunks": [chunk.to_dict() for chunk in chunks],
+        "tools": tools,
+        "meta": meta,
+    }

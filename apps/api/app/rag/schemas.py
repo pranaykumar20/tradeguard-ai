@@ -18,9 +18,9 @@ RAG_DOC_TYPES = frozenset(
     }
 )
 
-RAG_SOURCES = frozenset({"playbooks", "filings", "news", "journal", "all"})
+RAG_SOURCES = frozenset({"playbooks", "filings", "news", "journal", "regime", "all"})
 
-RagSource = Literal["playbooks", "filings", "news", "journal", "all"]
+RagSource = Literal["playbooks", "filings", "news", "journal", "regime", "all"]
 RagDocType = Literal[
     "playbook",
     "filing",

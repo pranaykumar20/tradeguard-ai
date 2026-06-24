@@ -97,6 +97,57 @@ flowchart LR
 
 ---
 
+## Phase 6 — Retrieval hardening *(done)*
+
+**Goal:** Postgres-native keyword search, SQL ACL, retrieval-quality eval, richer citations.
+
+| Step | Description | Status |
+|------|-------------|--------|
+| **6.1** | `content_tsv` + `keyword_search_rag()` (tsvector + pg_trgm fallback) | Done |
+| **6.2** | SQL-level ACL + doc_type filters in `search_rag` | Done |
+| **6.3** | Retrieval recall in golden eval (`must_contain_phrases`) | Done |
+| **6.4** | Trade-intent playbook quota + retrieval trace with scores | Done |
+| **6.5** | Rich chunk metadata + UI source dates | Done |
+
+**Gate:** Keyword search avoids full-corpus scan; golden eval reports `retrieval_recall_pct`; trade queries include playbook context.
+
+---
+
+## Phase 7 — Quality and freshness *(done)*
+
+**Goal:** Section-aware filings, fresh news, regime context, optional cross-encoder rerank.
+
+| Step | Description | Status |
+|------|-------------|--------|
+| **7.1** | Parent-child filing context expansion via `parent_id` | Done |
+| **7.2** | Mock cross-encoder reranker (`providers/reranker/`) | Done |
+| **7.3** | News TTL eviction (Celery daily job) | Done |
+| **7.4** | `regime_snapshot` indexer + `search_regime` tool | Done |
+| **7.5** | `search_news` tool + routing hints | Done |
+| **7.6** | Staleness labels + hard cutoff for "today" news queries | Done |
+| **7.7** | Weekly drift job (golden MRR vs baseline, alert if drop >15%) | Done |
+
+**Gate:** Filing hits include section headers; "today" news never cites chunks >7 days old.
+
+---
+
+## Phase 8 — Scale and intelligence *(done)*
+
+**Goal:** Cache hot queries, classifier fallback, research mode, online feedback loop.
+
+| Step | Description | Status |
+|------|-------------|--------|
+| **8.1** | Per-`doc_type` partial indexes (Alembic migration) | Done |
+| **8.2** | Query embedding + result LRU cache (invalidated on reindex) | Done |
+| **8.3** | Classifier fallback when `infer_rag_tools()` returns `[]` | Done |
+| **8.4** | Read-only `POST /api/chat/research` multi-tool loop | Done |
+| **8.5** | Feedback stores `rag_chunk_ids`; thumbs-down feeds eval backlog | Done |
+| **8.6** | Dedicated vector DB | Deferred (>500K chunks) |
+
+**Gate:** Repeated queries hit cache; ambiguous queries still retrieve playbooks; research endpoint returns diversified chunks.
+
+---
+
 ## Key files
 
 | Area | Path |
@@ -130,6 +181,13 @@ flowchart LR
 | `OPENAI_API_KEY` | — | Live embeddings (mock when unset) |
 | `SEC_FILINGS_ENABLED` | `true` | Index SEC summaries at startup |
 | `RAG_HYBRID_SEARCH_ENABLED` | `true` | Fuse vector + keyword ranks (RRF) |
+| `RAG_KEYWORD_SEARCH_ENABLED` | `true` | Postgres tsvector keyword leg (falls back to in-memory scan) |
 | `RAG_QUERY_REWRITE_ENABLED` | `true` | Expand domain terms before embedding |
 | `RAG_TYPE_ROUTING_ENABLED` | `true` | Route queries to playbook/filing/news |
 | `RAG_CANDIDATE_POOL` | `20` | Candidates before rerank → top-k |
+| `RAG_RERANKER_ENABLED` | `true` | Cross-encoder rerank (mock provider) |
+| `RAG_NEWS_TTL_DAYS` | `30` | Delete news chunks older than N days |
+| `RAG_NEWS_TODAY_MAX_AGE_DAYS` | `7` | Max news age for "today" queries |
+| `RAG_QUERY_CACHE_ENABLED` | `true` | LRU cache for embeddings + results |
+| `RAG_RESEARCH_MODE_ENABLED` | `true` | Multi-round research retrieval |
+| `RAG_DRIFT_ALERT_PCT` | `15` | Alert when retrieval recall drops vs baseline |

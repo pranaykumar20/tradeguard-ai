@@ -114,6 +114,10 @@ export type RagSource = {
   content: string;
   score: number;
   doc_type?: string;
+  section?: string;
+  filed_at?: string;
+  url?: string;
+  ingested_at?: string;
 };
 
 export type RiskSnapshot = {

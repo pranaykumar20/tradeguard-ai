@@ -3,7 +3,8 @@
     "id": "wash-sale-playbook",
     "query": "What is the wash sale rule?",
     "expected_tools": ["search_playbooks"],
-    "forbidden_tools": ["get_quote"]
+    "forbidden_tools": ["get_quote"],
+    "must_contain_phrases": ["wash-sale"]
   },
   {
     "id": "filing-risk-factors",
@@ -46,5 +47,11 @@
     "query": "What happened last time I traded NVDA?",
     "tickers": ["NVDA"],
     "expected_tools": ["search_journal"]
+  },
+  {
+    "id": "vix-playbook",
+    "query": "What happens when VIX is rising?",
+    "expected_tools": ["search_playbooks"],
+    "must_contain_phrases": ["VIX"]
   }
 ]

@@ -57,6 +57,23 @@ class RAGIndexer:
         logger.info("rag_filings_indexed", stored=result["stored"], tickers=len(self.tickers))
         return int(result["stored"])
 
+    async def index_regime(self) -> int:
+        if not settings.rag_regime_index_enabled:
+            return 0
+        from app.rag.indexers.regime_snapshot import index_regime_snapshot
+
+        return await index_regime_snapshot()
+
+    async def evict_stale_news(self) -> int:
+        storage = await get_storage()
+        deleted = await storage.delete_stale_rag_news(older_than_days=settings.rag_news_ttl_days)
+        if deleted:
+            from app.rag.cache import invalidate_rag_caches
+
+            invalidate_rag_caches()
+        logger.info("rag_news_evicted", deleted=deleted, ttl_days=settings.rag_news_ttl_days)
+        return deleted
+
     async def index_news(self) -> int:
         if not settings.rag_news_index_enabled:
             return 0
@@ -116,6 +133,7 @@ class RAGIndexer:
             "filings": self.index_filings,
             "news": self.index_news,
             "journal": self.index_journal,
+            "regime": self.index_regime,
         }
         count = await handlers[source]()
         RAGService.mark_ready()
@@ -126,6 +144,8 @@ class RAGIndexer:
         filings = await self.index_filings()
         news = await self.index_news()
         journal = await self.index_journal()
+        regime = await self.index_regime()
+        evicted = await self.evict_stale_news()
         storage = await get_storage()
         await storage.set_app_state(
             _RAG_INIT_KEY,
@@ -137,7 +157,9 @@ class RAGIndexer:
             "filings": filings,
             "news": news,
             "journal": journal,
-            "total": playbooks + filings + news + journal,
+            "regime": regime,
+            "news_evicted": evicted,
+            "total": playbooks + filings + news + journal + regime,
         }
         logger.info("rag_index_refreshed", **result)
         return result
