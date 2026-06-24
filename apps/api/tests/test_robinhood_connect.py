@@ -1,5 +1,6 @@
 """Robinhood MCP OAuth connect — per-user broker linking."""
 
+import secrets
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -9,7 +10,11 @@ from httpx import ASGITransport, AsyncClient
 from app.core.secrets import decrypt_secret, encrypt_secret
 from app.core.user_context import user_scope
 from app.main import app
-from app.services.robinhood_connect import RobinhoodConnectService
+from app.services.robinhood_connect import (
+    OAUTH_PENDING_PREFIX,
+    OAUTH_STATE_BYTES,
+    RobinhoodConnectService,
+)
 
 
 @pytest.fixture
@@ -56,6 +61,12 @@ async def test_robinhood_persist_and_disconnect():
     disconnected = await svc.disconnect()
     assert disconnected["connected"] is False
     assert await svc.is_user_connected() is False
+
+
+def test_oauth_pending_state_key_fits_app_state_column():
+    state = secrets.token_urlsafe(OAUTH_STATE_BYTES)
+    key = f"{OAUTH_PENDING_PREFIX}{state}"
+    assert len(key) <= 64
 
 
 @pytest.mark.asyncio

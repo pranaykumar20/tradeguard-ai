@@ -22,6 +22,8 @@ GLOBAL_USER_ID = "_global"
 MCP_RESOURCE = "https://agent.robinhood.com/mcp/trading"
 OAUTH_CLIENT_STATE_KEY = "robinhood_oauth_client"
 OAUTH_PENDING_PREFIX = "robinhood_oauth_pending:"
+# app_state.key is VARCHAR(64); prefix is 24 chars → keep generated state under 40 chars.
+OAUTH_STATE_BYTES = 24
 
 BROKER_ID = "robinhood_agentic"
 ACCOUNT_ID = "agentic-main"
@@ -51,7 +53,7 @@ class RobinhoodConnectService:
         redirect_uri = settings.robinhood_oauth_redirect_uri
         client_id = await self._ensure_oauth_client(redirect_uri)
         code_verifier, code_challenge = _pkce_pair()
-        state = secrets.token_urlsafe(32)
+        state = secrets.token_urlsafe(OAUTH_STATE_BYTES)
 
         from app.core.user_context import get_current_user_id
 

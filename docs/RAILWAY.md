@@ -74,6 +74,8 @@ In the **API service** → **Variables**, add references (Railway’s **Variable
 | `APP_ENV` | `production` | |
 | `STORAGE_BACKEND` | `postgres` | |
 | `CORS_ORIGINS` | `https://your-app.vercel.app` | Your Vercel production URL (no trailing slash). Add preview URLs comma-separated if needed. |
+| `API_PUBLIC_URL` | `https://your-api.up.railway.app` | Public Railway domain (no trailing slash). Required for Robinhood OAuth callback. |
+| `FRONTEND_URL` | `https://your-app.vercel.app` | Optional; used to redirect users after OAuth. Falls back to first `CORS_ORIGINS` entry. |
 
 ### Recommended (Composer LLM)
 
